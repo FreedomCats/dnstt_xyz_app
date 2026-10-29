@@ -189,4 +189,6 @@ app has now.
   arm64), the AAR from 5.5 to 11 MB. The old library had no HTTP or TLS
   client; `net/http`, HTTP/2 and uTLS (with its certificate compression
   libraries) are the cost of DoH/DoT with fingerprint camouflage.
+- `ci.yml` is green; the `.so` files built in CI are byte-identical to a
+  local build of the same commit.
 - Not checked live: the app does not use the new transports until stage 3.

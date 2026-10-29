@@ -167,6 +167,8 @@ Solution:
   loop); every DNS server test created such a client. Fixed with the move.
 - `go test ./...` runs an end-to-end test over UDP, DoH and DoT against
   `dnstt-server`. The AAR is about twice as large (11 MB, +3.5 MB per ABI).
+- `ci.yml` is green (Go tests with the end-to-end test, Kotlin tests, signed
+  APKs); the CI `.so` checksums equal those of a local build.
 - The app does not use DoH/DoT yet (stage 3); it passes plain addresses as
   before.
 
