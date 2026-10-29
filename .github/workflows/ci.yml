@@ -10,10 +10,21 @@ permissions:
   contents: read
 
 jobs:
+  # dnstt.aar is not in git: it is built from go_src/ at every commit
+  aar:
+    uses: ./.github/workflows/build-aar.yml
+
   test:
+    needs: aar
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      - name: Download dnstt.aar
+        uses: actions/download-artifact@v7
+        with:
+          name: dnstt-aar
+          path: android/app/libs
 
       - name: Setup Java
         uses: actions/setup-java@v6
@@ -53,10 +64,16 @@ jobs:
         run: go test ./...
 
   build-android:
-    needs: test
+    needs: [aar, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      - name: Download dnstt.aar
+        uses: actions/download-artifact@v7
+        with:
+          name: dnstt-aar
+          path: android/app/libs
 
       - name: Setup Java
         uses: actions/setup-java@v6
@@ -91,6 +108,13 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info="$RUNNER_TEMP/debug-info"
+
+      # libapp.so holds the absolute path of the generated Dart plugin registrant; in CI
+      # that is the runner's checkout, not a user path
+      - name: Check APKs for machine paths
+        run: |
+          scripts/check_binary_paths.sh --allow "^file://$GITHUB_WORKSPACE/\.dart_tool/" \
+            build/app/outputs/flutter-apk/app-*-release.apk
 
       - name: Show signing certificate
         run: |

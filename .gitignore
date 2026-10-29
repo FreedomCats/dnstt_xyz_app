@@ -83,8 +83,9 @@ app.*.map.json
 # Test related
 /coverage/
 
-# Exceptions to above rules
-!/android/app/libs/*.aar
+# Go library for Android, built by scripts/build_aar.sh
+/android/app/libs/dnstt.aar
+/android/app/libs/dnstt-sources.jar
 
 # Key files (should not be committed)
 *.jks

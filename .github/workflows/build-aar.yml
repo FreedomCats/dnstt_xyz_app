@@ -1,0 +1,61 @@
+name: Build dnstt.aar
+
+# Builds the DNSTT Go library for Android from go_src/ and uploads it as the
+# dnstt-aar artifact. Called by ci.yml and release.yml; jobs that build the app
+# download the artifact into android/app/libs/.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  # Same NDK as Flutter uses and as scripts/build_aar.sh expects
+  NDK_VERSION: '28.2.13676358'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # gomobile compiles the Java side of the bindings
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go_src/go.mod
+          cache-dependency-path: go_src/go.sum
+
+      - name: Install Android NDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
+
+      - name: Build dnstt.aar
+        run: scripts/build_aar.sh
+
+      - name: Show checksums
+        run: |
+          mkdir -p "$RUNNER_TEMP/aar"
+          unzip -q android/app/libs/dnstt.aar -d "$RUNNER_TEMP/aar"
+          {
+            echo '### dnstt.aar'
+            echo '```'
+            go version "$RUNNER_TEMP/aar/jni/arm64-v8a/libgojni.so"
+            sha256sum android/app/libs/dnstt.aar
+            (cd "$RUNNER_TEMP/aar" && sha256sum jni/*/libgojni.so)
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload dnstt.aar
+        uses: actions/upload-artifact@v7
+        with:
+          name: dnstt-aar
+          path: android/app/libs/dnstt.aar
+          retention-days: 14
+          if-no-files-found: error

@@ -2,6 +2,8 @@ module www.bamsoftware.com/git/dnstt.git
 
 go 1.24.0
 
+toolchain go1.26.10
+
 require (
 	github.com/flynn/noise v1.0.0
 	github.com/refraction-networking/utls v1.6.6

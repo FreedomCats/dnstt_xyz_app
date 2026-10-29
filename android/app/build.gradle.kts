@@ -100,6 +100,16 @@ flutter {
     source = "../.."
 }
 
+// dnstt.aar is built from go_src/ by scripts/build_aar.sh and is not in git
+val dnsttAar = file("libs/dnstt.aar")
+tasks.named("preBuild") {
+    doFirst {
+        if (!dnsttAar.exists()) {
+            throw GradleException("android/app/libs/dnstt.aar is missing: run scripts/build_aar.sh")
+        }
+    }
+}
+
 dependencies {
     implementation(files("libs/dnstt.aar"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")

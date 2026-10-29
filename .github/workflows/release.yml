@@ -12,7 +12,12 @@ on:
         default: 'v2.2.0-beta'
 
 jobs:
+  # dnstt.aar is not in git: it is built from go_src/ at the tagged commit
+  aar:
+    uses: ./.github/workflows/build-aar.yml
+
   build-android:
+    needs: aar
     runs-on: ubuntu-latest
     outputs:
       cert-sha256: ${{ steps.cert.outputs.sha256 }}
@@ -20,6 +25,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
+
+      - name: Download dnstt.aar
+        uses: actions/download-artifact@v7
+        with:
+          name: dnstt-aar
+          path: android/app/libs
 
       - name: Setup Java
         uses: actions/setup-java@v6
@@ -69,6 +80,13 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info="$RUNNER_TEMP/debug-info"
+
+      # libapp.so holds the absolute path of the generated Dart plugin registrant; in CI
+      # that is the runner's checkout, not a user path
+      - name: Check APKs for machine paths
+        run: |
+          scripts/check_binary_paths.sh --allow "^file://$GITHUB_WORKSPACE/\.dart_tool/" \
+            build/app/outputs/flutter-apk/app-*-release.apk
 
       - name: Get signing certificate
         id: cert
@@ -123,6 +141,9 @@ jobs:
           cargo build -p slipstream-client --release --features openssl-vendored
           cp target/release/slipstream-client ../../macos/Runner/Libraries/slipstream-client
           chmod +x ../../macos/Runner/Libraries/slipstream-client
+
+      - name: Check libraries for machine paths
+        run: scripts/check_binary_paths.sh go_src/libdnstt.dylib macos/Runner/Libraries/slipstream-client
 
       - name: Get dependencies
         run: flutter pub get
@@ -197,6 +218,9 @@ jobs:
           cargo build -p slipstream-client --release --features openssl-vendored
           cp target/release/slipstream-client ../../macos/Runner/Libraries/slipstream-client
           chmod +x ../../macos/Runner/Libraries/slipstream-client
+
+      - name: Check libraries for machine paths
+        run: scripts/check_binary_paths.sh go_src/libdnstt.dylib macos/Runner/Libraries/slipstream-client
 
       - name: Get dependencies
         run: flutter pub get

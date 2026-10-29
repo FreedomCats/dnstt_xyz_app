@@ -66,9 +66,8 @@ The `slipstream-client` binary runs as a subprocess (not a library). It listens 
 ## Prerequisites
 
 - Flutter SDK 3.x+
-- Android SDK (API 21+) with NDK
-- Go 1.21+
-- gomobile: `go install golang.org/x/mobile/cmd/gomobile@latest`
+- Android SDK (API 21+) with NDK 28.2.13676358 (the version Flutter uses)
+- Go 1.21+ (the toolchain pinned in `go_src/go.mod` is downloaded automatically)
 - Java JDK 17
 - Rust toolchain (for Slipstream): `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 - cargo-ndk (for Android Slipstream): `cargo install cargo-ndk`
@@ -80,7 +79,7 @@ dnstt_app/
 ├── android/
 │   └── app/
 │       ├── libs/
-│       │   └── dnstt.aar               # Compiled Go dnstt library
+│       │   └── dnstt.aar               # Go dnstt library, built by scripts/build_aar.sh (not in git)
 │       ├── src/main/
 │       │   ├── AndroidManifest.xml
 │       │   ├── jniLibs/
@@ -150,45 +149,33 @@ dnstt_app/
 
 ## Building the Go Mobile Library (AAR)
 
-The dnstt client is compiled from Go to an Android AAR library.
-
-### First Time Setup
-
-```bash
-# Install gomobile
-go install golang.org/x/mobile/cmd/gomobile@latest
-go install golang.org/x/mobile/cmd/gobind@latest
-
-# Add to PATH
-export PATH=$PATH:$HOME/go/bin
-
-# Initialize gomobile (downloads Android NDK components)
-gomobile init
-```
-
-### Build the AAR
-
-**IMPORTANT**: Build from a temp directory to avoid embedding local paths in the binary.
+The dnstt client is compiled from Go to an Android AAR library. The AAR is not in git:
+CI builds it from `go_src/` at every commit (`.github/workflows/build-aar.yml`), and a local
+Android build needs it in `android/app/libs/dnstt.aar` (Gradle stops with a message if it is
+missing).
 
 ```bash
-# Copy source to temp directory and build from there
-mkdir -p /tmp/dnstt_build
-cp -r go_src/* /tmp/dnstt_build/
-cd /tmp/dnstt_build
-
-# Build for all architectures (largest file, most compatible)
-# -trimpath removes local filesystem paths from binary
-# -ldflags="-s -w" strips debug info (smaller size)
-GOFLAGS="-trimpath" gomobile bind -ldflags="-s -w" -androidapi 21 -target=android -o dnstt.aar ./mobile
-
-# Or build for specific architectures (smaller size)
-GOFLAGS="-trimpath" gomobile bind -ldflags="-s -w" -androidapi 21 -target=android/arm64 -o dnstt.aar ./mobile           # ARM64 only
-GOFLAGS="-trimpath" gomobile bind -ldflags="-s -w" -androidapi 21 -target=android/arm,android/arm64 -o dnstt.aar ./mobile  # ARM + ARM64
-
-# Copy to project libs folder
-cp dnstt.aar /path/to/project/android/app/libs/
-cp dnstt.aar /path/to/project/go_src/  # Keep a copy in go_src
+# Uses ANDROID_HOME (or sdk.dir from android/local.properties) and the NDK in
+# $ANDROID_HOME/ndk/28.2.13676358 (override with ANDROID_NDK_HOME)
+./scripts/build_aar.sh
 ```
+
+The script:
+- copies `go_src` to `/tmp/dnstt_build` and builds there. gomobile records that directory in
+  the Go build info even with `-trimpath`, so it is a fixed, neutral path;
+- installs `gomobile` and `gobind` at the version pinned in `go.mod` into a temporary directory
+  (no `go install …@latest`, no `gomobile init`);
+- builds with the Go toolchain from `go.mod`, `-trimpath` and `-ldflags="-s -w"` for
+  `android/arm,android/arm64,android/amd64` (the ABIs Flutter builds; set `TARGETS` to change);
+- writes `android/app/libs/dnstt.aar` and checks it with `scripts/check_binary_paths.sh`.
+
+The build is reproducible: the same Go toolchain and NDK give byte-identical `.so` files.
+
+`scripts/check_binary_paths.sh FILE...` checks binaries and archives (`.aar`, `.apk`) for paths
+of the build machine (`/home/`, `/Users/`, `/root/`, `C:\Users`). CI runs it on the AAR, the
+APKs and the macOS libraries. The Dart AOT snapshot (`libapp.so`) contains the absolute path of
+the project directory (`file://<project>/.dart_tool/flutter_build/dart_plugin_registrant.dart`),
+so a release APK built on a developer machine carries the user's path: build releases in CI.
 
 ### Go Mobile Targets
 
@@ -196,7 +183,7 @@ cp dnstt.aar /path/to/project/go_src/  # Keep a copy in go_src
 |--------|-------------|----------|
 | `android/arm` | ARMv7a (32-bit) | Older Android phones |
 | `android/arm64` | ARM64 (64-bit) | Modern Android phones |
-| `android/386` | x86 (32-bit) | Old emulators |
+| `android/386` | x86 (32-bit) | Old emulators (not built: Flutter has no x86 build) |
 | `android/amd64` | x86_64 (64-bit) | Modern emulators, Chromebooks |
 
 ## Building the Flutter App
@@ -288,11 +275,11 @@ android {
 
 ### AAR Dependency Configuration
 
-In `android/app/build.gradle`:
+In `android/app/build.gradle.kts`:
 
-```gradle
+```kotlin
 dependencies {
-    implementation fileTree(dir: 'libs', include: ['*.aar'])
+    implementation(files("libs/dnstt.aar"))
     // ... other dependencies
 }
 ```
@@ -425,16 +412,13 @@ Desktop Slipstream manager that:
 # Edit Go code (source is in go_src/)
 vim go_src/mobile/mobile.go
 
-# Rebuild AAR
-cd go_src
-gomobile bind -v -androidapi 21 -target=android -o dnstt.aar ./mobile
+# Run the Go tests
+(cd go_src && go test ./...)
 
-# Copy to libs
-cp dnstt.aar ../android/app/libs/
+# Rebuild the AAR into android/app/libs/
+./scripts/build_aar.sh
 
 # Rebuild Flutter app
-cd ..
-flutter clean
 flutter build apk --debug
 ```
 
@@ -459,22 +443,15 @@ adb logcat -c && adb logcat | grep DnsttVpnService
 
 ## Troubleshooting
 
-### gomobile not found
-```bash
-export PATH=$PATH:$HOME/go/bin
-gomobile init
-```
-
-### gobind not found
-```bash
-go install golang.org/x/mobile/cmd/gobind@latest
-```
+### dnstt.aar is missing
+Gradle stops with `android/app/libs/dnstt.aar is missing`: run `./scripts/build_aar.sh`.
 
 ### AAR build fails with NDK error
 ```bash
-# Ensure NDK is installed via Android Studio SDK Manager
-# Or set ANDROID_NDK_HOME
-export ANDROID_NDK_HOME=$HOME/Library/Android/sdk/ndk/25.2.9519653
+# Install the NDK Flutter uses
+sdkmanager "ndk;28.2.13676358"
+# Or point the script at another NDK
+export ANDROID_NDK_HOME=<path to the NDK>
 ```
 
 ### App crashes on connect
@@ -513,10 +490,7 @@ The dnstt UDP socket may get routed through the VPN despite app exclusion. The c
 # === FULL BUILD FROM SCRATCH ===
 
 # 1. Build Go library (from project root)
-cd go_src
-gomobile bind -v -androidapi 21 -target=android -o dnstt.aar ./mobile
-cp dnstt.aar ../android/app/libs/
-cd ..
+./scripts/build_aar.sh
 
 # 2. Build Flutter app
 flutter clean

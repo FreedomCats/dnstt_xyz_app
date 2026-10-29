@@ -368,6 +368,8 @@ system falls back to plain DNS, which mapdns answers.
 
 ### Stage 1. Build the Go library in CI (prerequisite)
 
+Detailed plan and result: `docs/STAGE1_GO_LIBRARY_CI.md`.
+
 1. `scripts/build_aar.sh`: copy `go_src` to a temp dir, `gomobile bind
    -trimpath -ldflags="-s -w" -androidapi 21 -target=android`, copy the AAR to
    `android/app/libs/`.

@@ -62,8 +62,13 @@ contain personal data either:
   directory, as described in `CLAUDE.md`; build Rust with
   `--remap-path-prefix` or in CI.
 - Before committing a binary, check that it contains no paths or names from the
-  machine: `strings <file> | grep -E '/home/|/Users/|C:\\Users'` (for `.aar`, on
-  the `.so` files inside the archive). The expected result is empty.
+  machine: `scripts/check_binary_paths.sh <file>` (it also unpacks `.aar` and
+  `.apk` and checks the native libraries inside). The expected result is
+  "ok" for every file.
+- A release APK contains the absolute path of the project directory: the Dart
+  AOT snapshot `libapp.so` keeps the URI of the generated plugin registrant
+  (`file://<project>/.dart_tool/…`). Build release APKs only in CI, never on
+  the developer's machine.
 - Create the Android signing key without a real name: only neutral values in
   `keytool -dname` (`CN=FreedomCats` or similar). The signing certificate is
   published with every APK.

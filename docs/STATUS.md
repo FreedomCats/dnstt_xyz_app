@@ -20,8 +20,11 @@ environment details, servers, credentials or other personal data.
      Node.js 24 versions.
   8. Design and work plan for DoH/DoT and tun2socks
      (`docs/DOH_DOT_TUN2SOCKS_PLAN.md`).
+  9. Stage 1 of that plan: `dnstt.aar` built from `go_src` in CI
+     (`docs/STAGE1_GO_LIBRARY_CI.md`, see below).
 - No pull requests are open yet. GitHub Actions are enabled in the fork, and
-  the four signing secrets are set. No release has been made yet.
+  the four signing secrets are set. No release has been made yet; the user
+  does not want one for now.
 
 ## Done: upstream SOCKS5 auth (upstream issue #15)
 
@@ -103,8 +106,38 @@ Solution:
   the GitHub mobile app) and need a GitHub login; releases are easier to
   install from a phone.
 - Only `arm64-v8a` has the Slipstream binary; the `armeabi-v7a` and `x86_64`
-  APKs work with DNSTT only. `dnstt.aar` and `libslipstream_client.so` are
-  still prebuilt from upstream.
+  APKs work with DNSTT only. `libslipstream_client.so` is still prebuilt from
+  upstream.
+
+## Done: Go library built in CI (stage 1 of the DoH/DoT plan)
+
+- `scripts/build_aar.sh` builds `android/app/libs/dnstt.aar` from `go_src`:
+  copy in the fixed directory `/tmp/dnstt_build` (gomobile records it in the
+  build info), gomobile/gobind at the version pinned in `go.mod`, Go toolchain
+  from `go.mod`, `-trimpath -ldflags="-s -w"`, ABIs arm, arm64, amd64 (the old
+  AAR also had x86, which Flutter never packs). Two builds give a
+  byte-identical AAR. Java API is the same as the old upstream AAR.
+- `go_src/go.mod` pins `toolchain go1.26.10`; CI used Go 1.24.0 before (no
+  longer supported). Go tests pass with it.
+- `scripts/check_binary_paths.sh` checks binaries and archives for machine
+  paths; `--allow REGEX` for known neutral paths.
+- Finding: `libapp.so` (Dart AOT) in every release APK contains the absolute
+  project path (`file://<project>/.dart_tool/flutter_build/dart_plugin_registrant.dart`),
+  `--obfuscate` does not remove it. In CI it is the runner checkout, which
+  the check allows explicitly; a locally built release APK would carry the
+  user's path. Recorded in `AGENTS.md`: release APKs only from CI.
+- CI: reusable `.github/workflows/build-aar.yml` (JDK 17, Go from `go.mod`,
+  NDK 28.2.13676358 via `sdkmanager`, artifact `dnstt-aar`, checksums in the
+  job summary). `ci.yml` and `release.yml` build the AAR first and download
+  it before the Kotlin tests and the APK build; APKs are checked for paths;
+  `release.yml` also checks `libdnstt.dylib` and `slipstream-client` (untested
+  until the first release run).
+- `dnstt.aar` and `dnstt-sources.jar` are removed from git and ignored.
+  Gradle `preBuild` stops with "run scripts/build_aar.sh" if the AAR is
+  missing.
+- Locally: Kotlin unit tests pass and release APKs build with the new AAR.
+- Not yet checked on a device: the Go code is unchanged, but the toolchain and
+  the build are new. The user should install a CI APK and connect with DNSTT.
 
 ## Next steps
 
@@ -143,7 +176,7 @@ Solution:
    2. "Share proxy" exposes an open SOCKS5 proxy to the LAN. Now more
       important: with upstream auth, the relay on `0.0.0.0` lends the upstream
       account to anyone on the network. Add local auth for shared mode.
-   3. Rebuild `dnstt.aar` / `libslipstream_client.so` in CI (signing is done);
+   3. Rebuild `libslipstream_client.so` in CI (`dnstt.aar` is done);
       Slipstream for all Android ABIs.
    4. CI: add `flutter analyze` and the full `flutter test` after fixing or
       replacing the stale `test/widget_test.dart`; `go vet ./...` fails on
@@ -154,7 +187,8 @@ Solution:
    (covers 3.1, 3.3, 3.5 and 3.6). Order: build the Go library in CI, DoH/DoT in
    Go, then in the app for DNSTT, then Slipstream through a local UDP→DoH/DoT
    bridge, then tun2socks (hev-socks5-tunnel, fake-IP DNS, IPv6), then an
-   optional tunnel-DNS mode. Not started; waiting for the user's go-ahead.
+   optional tunnel-DNS mode. Stage 1 (Go library in CI) is done; next is
+   stage 2, DoH/DoT in the Go library.
 
 ## Working notes
 
@@ -162,7 +196,10 @@ Solution:
   <noreply@freedomcats.invalid>`, date at midnight UTC, no session links, check
   `git diff --cached` before every commit.
 - Toolchain that builds the project: Flutter 3.38.7, Android SDK platform 36,
-  build-tools 35, NDK 28.2.13676358, JDK 17, Go 1.24.
+  build-tools 35, NDK 28.2.13676358, JDK 17 (JDK 21 works too), Go toolchain
+  pinned in `go_src/go.mod` (1.26.10; an older local Go downloads it).
+- A local Android build needs `./scripts/build_aar.sh` first (about 3 minutes);
+  it reads `sdk.dir` from `android/local.properties`.
 - In cloud containers Maven Central may answer 429 to parallel Gradle
   downloads. Set `org.gradle.workers.max=1` and `org.gradle.parallel=false` in
   the user Gradle properties and retry; Gradle keeps what it already fetched.
@@ -186,7 +223,7 @@ Solution:
   `raw.githubusercontent.com` are readable.
 - `workflow_dispatch` buttons only exist for workflows on the default branch
   `main`; `ci.yml` runs on every push to any branch.
-- Run tests:
+- Run tests (after `./scripts/build_aar.sh`):
   - `flutter test test/socks5_auth_relay_test.dart`
   - `cd android && ./gradlew :app:testDebugUnitTest --tests 'xyz.dnstt.app.Socks5AuthRelayTest'`
   - `flutter build apk --debug --target-platform android-arm64`
