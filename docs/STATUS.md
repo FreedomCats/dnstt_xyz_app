@@ -118,8 +118,12 @@ Solution:
   amd64 (the old AAR also had x86, which Flutter never packs). Java API is the
   same as the old upstream AAR.
 - Reproducible: the `.so` files are byte-identical across builds and machines.
-  The first CI build differed from the local one only in the Go and GNU build
-  IDs, which hash the NDK compiler's path; `-buildid=` removes both.
+  Two causes of differences were found and fixed: the Go and GNU build IDs
+  hash the NDK compiler's path (`-buildid=` removes both), and GitHub runners
+  set a global `ANDROID_NDK_HOME` to their default NDK (r27), which the script
+  first preferred over the pinned r28. Now the script takes
+  `$ANDROID_HOME/ndk/$NDK_VERSION` and accepts another `ANDROID_NDK_HOME` only
+  with exactly that version.
 - `go_src/go.mod` pins `toolchain go1.26.10`; CI used Go 1.24.0 before (no
   longer supported). Go tests pass with it.
 - `scripts/check_binary_paths.sh` checks binaries and archives for machine

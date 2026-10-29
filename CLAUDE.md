@@ -156,7 +156,8 @@ missing).
 
 ```bash
 # Uses ANDROID_HOME (or sdk.dir from android/local.properties) and the NDK in
-# $ANDROID_HOME/ndk/28.2.13676358 (override with ANDROID_NDK_HOME)
+# $ANDROID_HOME/ndk/28.2.13676358. A global ANDROID_NDK_HOME is used only if it is
+# that same version: another NDK gives different binaries.
 ./scripts/build_aar.sh
 ```
 
@@ -453,8 +454,8 @@ Gradle stops with `android/app/libs/dnstt.aar is missing`: run `./scripts/build_
 ```bash
 # Install the NDK Flutter uses
 sdkmanager "ndk;28.2.13676358"
-# Or point the script at another NDK
-export ANDROID_NDK_HOME=<path to the NDK>
+# Or build with another installed NDK version on purpose (the binaries will differ from CI)
+NDK_VERSION=<version> ./scripts/build_aar.sh
 ```
 
 ### App crashes on connect

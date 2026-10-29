@@ -8,8 +8,10 @@
 # Environment:
 #   ANDROID_HOME       Android SDK (default: ANDROID_SDK_ROOT, then sdk.dir from
 #                      android/local.properties)
-#   ANDROID_NDK_HOME   NDK (default: $ANDROID_HOME/ndk/$NDK_VERSION)
-#   NDK_VERSION        default: the version Flutter uses
+#   NDK_VERSION        default: the version Flutter uses; taken from
+#                      $ANDROID_HOME/ndk/$NDK_VERSION
+#   ANDROID_NDK_HOME   used only if that directory is missing and this NDK has
+#                      exactly NDK_VERSION (another NDK gives different binaries)
 #   TARGETS            gomobile targets (default: the ABIs Flutter builds)
 
 set -euo pipefail
@@ -48,11 +50,21 @@ if [ -z "${ANDROID_HOME:-}" ] || [ ! -d "$ANDROID_HOME" ]; then
 fi
 export ANDROID_HOME
 
-if [ -z "${ANDROID_NDK_HOME:-}" ]; then
+ndk_revision() {
+    sed -n 's/^Pkg\.Revision *= *//p' "$1/source.properties" 2>/dev/null
+}
+
+# The NDK version is part of the build: another NDK gives different binaries. A global
+# ANDROID_NDK_HOME (CI runners set one) is used only if it has the pinned version.
+if [ -f "$ANDROID_HOME/ndk/$NDK_VERSION/source.properties" ]; then
     ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
-fi
-if [ ! -f "$ANDROID_NDK_HOME/source.properties" ]; then
-    echo "Error: NDK not found at $ANDROID_NDK_HOME" >&2
+elif [ -n "${ANDROID_NDK_HOME:-}" ] && [ "$(ndk_revision "$ANDROID_NDK_HOME")" = "$NDK_VERSION" ]; then
+    :
+else
+    echo "Error: NDK $NDK_VERSION not found in $ANDROID_HOME/ndk" >&2
+    if [ -n "${ANDROID_NDK_HOME:-}" ]; then
+        echo "ANDROID_NDK_HOME has NDK $(ndk_revision "$ANDROID_NDK_HOME"); set NDK_VERSION to build with it" >&2
+    fi
     echo "Install it with: sdkmanager \"ndk;$NDK_VERSION\"" >&2
     exit 1
 fi
@@ -60,7 +72,7 @@ export ANDROID_NDK_HOME
 
 echo "=== Building dnstt.aar ==="
 echo "Targets: $TARGETS"
-echo "NDK: $(sed -n 's/^Pkg\.Revision *= *//p' "$ANDROID_NDK_HOME/source.properties")"
+echo "NDK: $(ndk_revision "$ANDROID_NDK_HOME") ($ANDROID_NDK_HOME)"
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
