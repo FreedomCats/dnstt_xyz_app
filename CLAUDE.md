@@ -94,15 +94,18 @@ dnstt_app/
 │       │       └── Socks5Client.kt      # SOCKS5 proxy client
 │       └── build.gradle.kts
 ├── go_src/                              # Go dnstt library source (included in repo)
+│   ├── client/                          # Tunnel client: resolver specs, UDP/DoH/DoT transports,
+│   │                                    #   uTLS, KCP/Noise/smux tunnel, probe, UDP→DoH/DoT bridge
 │   ├── mobile/
-│   │   └── mobile.go                    # Go mobile bindings
+│   │   └── mobile.go                    # Go mobile bindings (on top of client/)
 │   ├── desktop/
 │   │   └── desktop.go                   # C-compatible FFI bindings for desktop
 │   ├── dns/                             # DNS encoding/decoding
 │   ├── noise/                           # Noise encryption
 │   ├── turbotunnel/                     # Tunnel management
-│   ├── dnstt-client/                    # Original CLI client code
-│   ├── dnstt-server/                    # Server code (reference)
+│   ├── internal/testresolver/           # Local DoH/DoT servers for tests
+│   ├── dnstt-client/                    # CLI client (on top of client/)
+│   ├── dnstt-server/                    # Server code (reference) and the end-to-end tests
 │   ├── go.mod
 │   └── go.sum
 ├── vendor/
@@ -392,13 +395,39 @@ TCP state machine that:
 - Forwards data to SOCKS5 proxy
 - Sends responses back through TUN
 
-### mobile.go (Go)
+### mobile.go and the client package (Go)
 
 The DNSTT client library that:
 - Creates DNS-encoded tunnel
 - Handles Noise encryption
 - Manages KCP reliable transport
 - Provides SOCKS5 proxy interface on localhost:7000
+
+The tunnel code lives in `go_src/client`; `mobile` (Android AAR, also wrapped by `desktop`) and
+the `dnstt-client` CLI use it. A resolver is one spec string:
+
+| Spec | Transport |
+|------|-----------|
+| `192.0.2.1`, `192.0.2.1:5353`, `[2001:db8::1]:53`, `udp://host[:port]` | UDP (port 53 by default) |
+| `https://host[:port][/path]` | DoH, RFC 8484 (port 443, path `/dns-query` by default) |
+| `tls://host[:port]` | DoT, RFC 7858 (port 853) |
+
+- `Mobile.newClient(resolver, …)` takes a spec. Optional, before `start()`: `setBootstrap(ip)`
+  (connect to this IP instead of resolving the DoH/DoT host name; TLS keeps the name),
+  `setTLSFingerprint(spec)` (uTLS distribution such as `Chrome` or `3*Chrome,1*Firefox`,
+  `none` for Go's TLS, empty for the default), `setSocketProtector(p)` (`VpnService.protect`).
+- `Mobile.resolverKind(spec)` (`udp`/`doh`/`dot`, empty if invalid) and
+  `Mobile.udpResolverAddr(spec)` (`host:port` for UDP specs).
+- `Mobile.startBridge(spec, bootstrap, fingerprint)`: local UDP DNS server on 127.0.0.1
+  forwarding to the resolver (for slipstream-client, which speaks only UDP); `port()`, `stop()`.
+- `Mobile.probeResolver(spec, bootstrap, fingerprint, tunnelDomain, timeoutMs)`: one DNSTT
+  query through the resolver, latency in ms (includes up to 1 s the server holds a lone poll).
+- Desktop C exports mirror them: `dnstt_set_bootstrap`, `dnstt_set_tls_fingerprint`,
+  `dnstt_resolver_kind`, `dnstt_bridge_start`/`dnstt_bridge_stop`, `dnstt_probe_resolver`,
+  `dnstt_test_dns_server_ex`.
+- DoT redials with backoff after a lost connection and treats a connection as dead after 20 s
+  without an answer; DoH uses HTTP/2 pings and a 20 s request timeout. `go test ./...` in
+  `go_src` runs an end-to-end test over UDP, DoH and DoT against `dnstt-server`.
 
 ### slipstream_service.dart (Desktop)
 

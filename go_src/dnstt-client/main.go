@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//	dnstt-client [-doh URL|-dot ADDR|-udp ADDR] -pubkey-file PUBKEYFILE DOMAIN LOCALADDR
+//	dnstt-client [-doh URL|-dot ADDR|-udp ADDR] [-bootstrap IP] -pubkey-file PUBKEYFILE DOMAIN LOCALADDR
 //
 // Examples:
 //
@@ -15,6 +15,11 @@
 //	-doh https://resolver.example/dns-query
 //	-dot resolver.example:853
 //	-udp resolver.example:53
+//
+// With -bootstrap, the program connects to the given IP address instead of
+// resolving the host name of the DoH or DoT resolver; TLS still uses the name.
+//
+//	-bootstrap 192.0.2.1
 //
 // You can give the server's public key as a file or as a hex string. Use
 // "dnstt-server -gen-key" to get the public key.
@@ -40,49 +45,24 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
-	utls "github.com/refraction-networking/utls"
-	"github.com/xtaci/kcp-go/v5"
-	"github.com/xtaci/smux"
+	"www.bamsoftware.com/git/dnstt.git/client"
 	"www.bamsoftware.com/git/dnstt.git/dns"
 	"www.bamsoftware.com/git/dnstt.git/noise"
-	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
 
-// smux streams will be closed after this much time without receiving data.
-const idleTimeout = 2 * time.Minute
-
-// dnsNameCapacity returns the number of bytes remaining for encoded data after
-// including domain in a DNS name.
-func dnsNameCapacity(domain dns.Name) int {
-	// Names must be 255 octets or shorter in total length.
-	// https://tools.ietf.org/html/rfc1035#section-2.3.4
-	capacity := 255
-	// Subtract the length of the null terminator.
-	capacity -= 1
-	for _, label := range domain {
-		// Subtract the length of the label and the length octet.
-		capacity -= len(label) + 1
-	}
-	// Each label may be up to 63 bytes long and requires 64 bytes to
-	// encode.
-	capacity = capacity * 63 / 64
-	// Base32 expands every 5 bytes to 8.
-	capacity = capacity * 5 / 8
-	return capacity
-}
+// How long the connection to the resolver and the Noise handshake may take.
+const connectTimeout = 1 * time.Minute
 
 // readKeyFromFile reads a key from a named file.
 func readKeyFromFile(filename string) ([]byte, error) {
@@ -94,32 +74,7 @@ func readKeyFromFile(filename string) ([]byte, error) {
 	return noise.ReadKey(f)
 }
 
-// sampleUTLSDistribution parses a weighted uTLS Client Hello ID distribution
-// string of the form "3*Firefox,2*Chrome,1*iOS", matches each label to a
-// utls.ClientHelloID from utlsClientHelloIDMap, and randomly samples one
-// utls.ClientHelloID from the distribution.
-func sampleUTLSDistribution(spec string) (*utls.ClientHelloID, error) {
-	weights, labels, err := parseWeightedList(spec)
-	if err != nil {
-		return nil, err
-	}
-	ids := make([]*utls.ClientHelloID, 0, len(labels))
-	for _, label := range labels {
-		var id *utls.ClientHelloID
-		if label == "none" {
-			id = nil
-		} else {
-			id = utlsLookup(label)
-			if id == nil {
-				return nil, fmt.Errorf("unknown TLS fingerprint %q", label)
-			}
-		}
-		ids = append(ids, id)
-	}
-	return ids[sampleWeighted(weights)], nil
-}
-
-func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
+func handle(local *net.TCPConn, sess *client.Tunnel, conv uint32) error {
 	stream, err := sess.OpenStream()
 	if err != nil {
 		return fmt.Errorf("session %08x opening stream: %v", conv, err)
@@ -162,62 +117,35 @@ func handle(local *net.TCPConn, sess *smux.Session, conv uint32) error {
 	return err
 }
 
-func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.Addr, pconn net.PacketConn) error {
-	defer pconn.Close()
-
+func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, resolver client.Resolver, opts client.Options) error {
 	ln, err := net.ListenTCP("tcp", localAddr)
 	if err != nil {
 		return fmt.Errorf("opening local listener: %v", err)
 	}
 	defer ln.Close()
 
-	mtu := dnsNameCapacity(domain) - 8 - 1 - numPadding - 1 // clientid + padding length prefix + padding + data length prefix
-	if mtu < 80 {
-		return fmt.Errorf("domain %s leaves only %d bytes for payload", domain, mtu)
-	}
-	log.Printf("effective MTU %d", mtu)
-
-	// Open a KCP conn on the PacketConn.
-	conn, err := kcp.NewConn2(remoteAddr, nil, 0, 0, pconn)
-	if err != nil {
-		return fmt.Errorf("opening KCP conn: %v", err)
-	}
-	defer func() {
-		log.Printf("end session %08x", conn.GetConv())
-		conn.Close()
-	}()
-	log.Printf("begin session %08x", conn.GetConv())
-	// Permit coalescing the payloads of consecutive sends.
-	conn.SetStreamMode(true)
-	// Disable the dynamic congestion window (limit only by the maximum of
-	// local and remote static windows).
-	conn.SetNoDelay(
-		0, // default nodelay
-		0, // default interval
-		0, // default resend
-		1, // nc=1 => congestion window off
-	)
-	conn.SetWindowSize(turbotunnel.QueueSize/2, turbotunnel.QueueSize/2)
-	if rc := conn.SetMtu(mtu); !rc {
-		panic(rc)
-	}
-
-	// Put a Noise channel on top of the KCP conn.
-	rw, err := noise.NewClient(conn, pubkey)
+	mtu, err := client.MTU(domain)
 	if err != nil {
 		return err
 	}
+	log.Printf("effective MTU %d", mtu)
 
-	// Start a smux session on the Noise channel.
-	smuxConfig := smux.DefaultConfig()
-	smuxConfig.Version = 2
-	smuxConfig.KeepAliveTimeout = idleTimeout
-	smuxConfig.MaxStreamBuffer = 1 * 1024 * 1024 // default is 65536
-	sess, err := smux.Client(rw, smuxConfig)
+	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+	defer cancel()
+	pconn, remoteAddr, err := client.Open(ctx, resolver, opts)
 	if err != nil {
-		return fmt.Errorf("opening smux session: %v", err)
+		return err
 	}
-	defer sess.Close()
+	tunnel, err := client.NewTunnel(ctx, pconn, remoteAddr, domain, pubkey)
+	if err != nil {
+		return err
+	}
+	conv := tunnel.Conv()
+	defer func() {
+		log.Printf("end session %08x", conv)
+		tunnel.Close()
+	}()
+	log.Printf("begin session %08x", conv)
 
 	for {
 		local, err := ln.Accept()
@@ -229,7 +157,7 @@ func run(pubkey []byte, domain dns.Name, localAddr *net.TCPAddr, remoteAddr net.
 		}
 		go func() {
 			defer local.Close()
-			err := handle(local.(*net.TCPConn), sess, conn.GetConv())
+			err := handle(local.(*net.TCPConn), tunnel, conv)
 			if err != nil {
 				log.Printf("handle: %v", err)
 			}
@@ -243,11 +171,12 @@ func main() {
 	var pubkeyFilename string
 	var pubkeyString string
 	var udpAddr string
+	var bootstrap string
 	var utlsDistribution string
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), `Usage:
-  %[1]s [-doh URL|-dot ADDR|-udp ADDR] -pubkey-file PUBKEYFILE DOMAIN LOCALADDR
+  %[1]s [-doh URL|-dot ADDR|-udp ADDR] [-bootstrap IP] -pubkey-file PUBKEYFILE DOMAIN LOCALADDR
 
 Examples:
   %[1]s -doh https://resolver.example/dns-query -pubkey-file server.pub t.example.com 127.0.0.1:7000
@@ -255,11 +184,7 @@ Examples:
 
 `, os.Args[0])
 		flag.PrintDefaults()
-		labels := make([]string, 0, len(utlsClientHelloIDMap))
-		labels = append(labels, "none")
-		for _, entry := range utlsClientHelloIDMap {
-			labels = append(labels, entry.Label)
-		}
+		labels := append([]string{"none"}, client.TLSFingerprintLabels()...)
 		fmt.Fprintf(flag.CommandLine.Output(), `
 Known TLS fingerprints for -utls are:
 `)
@@ -282,6 +207,7 @@ Known TLS fingerprints for -utls are:
 	flag.StringVar(&pubkeyString, "pubkey", "", fmt.Sprintf("server public key (%d hex digits)", noise.KeyLen*2))
 	flag.StringVar(&pubkeyFilename, "pubkey-file", "", "read server public key from file")
 	flag.StringVar(&udpAddr, "udp", "", "address of UDP DNS resolver")
+	flag.StringVar(&bootstrap, "bootstrap", "", "IP address to connect to instead of resolving the DoH or DoT host name")
 	flag.StringVar(&utlsDistribution, "utls",
 		"4*random,3*Firefox_120,1*Firefox_105,3*Chrome_120,1*Chrome_102,1*iOS_14,1*iOS_13",
 		"choose TLS fingerprint from weighted distribution")
@@ -328,87 +254,51 @@ Known TLS fingerprints for -utls are:
 		os.Exit(1)
 	}
 
-	utlsClientHelloID, err := sampleUTLSDistribution(utlsDistribution)
-	if err != nil {
+	// Check the distribution here, so that a mistake is reported before
+	// connecting. client.Open samples from it.
+	if _, err := client.SampleTLSFingerprint(utlsDistribution); err != nil {
 		fmt.Fprintf(os.Stderr, "parsing -utls: %v\n", err)
 		os.Exit(1)
 	}
-	if utlsClientHelloID != nil {
-		log.Printf("uTLS fingerprint %s %s", utlsClientHelloID.Client, utlsClientHelloID.Version)
-	}
-
-	// Iterate over the remote resolver address options and select one and
-	// only one.
-	var remoteAddr net.Addr
-	var pconn net.PacketConn
-	for _, opt := range []struct {
-		s string
-		f func(string) (net.Addr, net.PacketConn, error)
-	}{
-		// -doh
-		{dohURL, func(s string) (net.Addr, net.PacketConn, error) {
-			addr := turbotunnel.DummyAddr{}
-			var rt http.RoundTripper
-			if utlsClientHelloID == nil {
-				transport := http.DefaultTransport.(*http.Transport).Clone()
-				// Disable DefaultTransport's default Proxy =
-				// ProxyFromEnvironment setting, for conformity
-				// with utlsRoundTripper and with DoT mode,
-				// which do not take a proxy from the
-				// environment.
-				transport.Proxy = nil
-				rt = transport
-			} else {
-				rt = NewUTLSRoundTripper(nil, utlsClientHelloID)
-			}
-			pconn, err := NewHTTPPacketConn(rt, dohURL, 32)
-			return addr, pconn, err
-		}},
-		// -dot
-		{dotAddr, func(s string) (net.Addr, net.PacketConn, error) {
-			addr := turbotunnel.DummyAddr{}
-			var dialTLSContext func(ctx context.Context, network, addr string) (net.Conn, error)
-			if utlsClientHelloID == nil {
-				dialTLSContext = (&tls.Dialer{}).DialContext
-			} else {
-				dialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-					return utlsDialContext(ctx, network, addr, nil, utlsClientHelloID)
-				}
-			}
-			pconn, err := NewTLSPacketConn(dotAddr, dialTLSContext)
-			return addr, pconn, err
-		}},
-		// -udp
-		{udpAddr, func(s string) (net.Addr, net.PacketConn, error) {
-			addr, err := net.ResolveUDPAddr("udp", s)
-			if err != nil {
-				return nil, nil, err
-			}
-			pconn, err := net.ListenUDP("udp", nil)
-			return addr, pconn, err
-		}},
-	} {
-		if opt.s == "" {
-			continue
-		}
-		if pconn != nil {
-			fmt.Fprintf(os.Stderr, "only one of -doh, -dot, and -udp may be given\n")
-			os.Exit(1)
-		}
-		var err error
-		remoteAddr, pconn, err = opt.f(opt.s)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	}
-	if pconn == nil {
-		fmt.Fprintf(os.Stderr, "one of -doh, -dot, or -udp is required\n")
+	if _, err := client.ParseBootstrap(bootstrap); err != nil {
+		fmt.Fprintf(os.Stderr, "parsing -bootstrap: %v\n", err)
 		os.Exit(1)
 	}
 
-	pconn = NewDNSPacketConn(pconn, remoteAddr, domain)
-	err = run(pubkey, domain, localAddr, remoteAddr, pconn)
+	// Select one and only one of the remote resolver address options.
+	var spec string
+	for _, opt := range []struct {
+		value, prefix string
+	}{
+		{dohURL, ""},
+		{dotAddr, "tls://"},
+		{udpAddr, "udp://"},
+	} {
+		if opt.value == "" {
+			continue
+		}
+		if spec != "" {
+			fmt.Fprintf(os.Stderr, "only one of -doh, -dot, and -udp may be given\n")
+			os.Exit(1)
+		}
+		spec = opt.prefix + opt.value
+	}
+	if spec == "" {
+		fmt.Fprintf(os.Stderr, "one of -doh, -dot, or -udp is required\n")
+		os.Exit(1)
+	}
+	resolver, err := client.ParseResolver(spec)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if dohURL != "" && resolver.Kind != client.KindDoH {
+		fmt.Fprintf(os.Stderr, "-doh needs an https:// URL\n")
+		os.Exit(1)
+	}
+
+	opts := client.Options{Bootstrap: bootstrap, TLSFingerprint: utlsDistribution}
+	err = run(pubkey, domain, localAddr, resolver, opts)
 	if err != nil {
 		log.Fatal(err)
 	}

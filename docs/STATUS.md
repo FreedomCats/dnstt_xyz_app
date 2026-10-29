@@ -22,6 +22,8 @@ environment details, servers, credentials or other personal data.
      (`docs/DOH_DOT_TUN2SOCKS_PLAN.md`).
   9. Stage 1 of that plan: `dnstt.aar` built from `go_src` in CI
      (`docs/STAGE1_GO_LIBRARY_CI.md`, see below).
+  10. Stage 2: DoH and DoT in the Go library (`docs/STAGE2_GO_DOH_DOT.md`,
+      see below).
 - No pull requests are open yet. GitHub Actions are enabled in the fork, and
   the four signing secrets are set. No release has been made yet; the user
   does not want one for now.
@@ -150,6 +152,24 @@ Solution:
 - Not yet checked on a device: the Go code is unchanged, but the toolchain and
   the build are new. The user should install a CI APK and connect with DNSTT.
 
+## Done: DoH and DoT in the Go library (stage 2)
+
+- New package `go_src/client`: resolver spec parser (IP / `udp://` /
+  `https://` / `tls://`), transports from upstream dnstt (DoH, DoT, uTLS)
+  with clean shutdown, DoT redial with backoff and a liveness check, HTTP/2
+  pings, bootstrap address, socket protect hook, the KCP/Noise/smux tunnel,
+  `Probe` and the UDP→DoH/DoT `Bridge`. utls 1.6.6 → 1.8.2; the default
+  fingerprint distribution is `4*Chrome,1*Firefox,1*Safari`.
+- `mobile` and `desktop` use it; new functions only, the existing API is
+  unchanged (details in `CLAUDE.md`, "mobile.go and the client package").
+  `NewClient` now rejects an invalid resolver spec instead of `Start`.
+- Before, stopping a client left goroutines running (the encoder's send
+  loop); every DNS server test created such a client. Fixed with the move.
+- `go test ./...` runs an end-to-end test over UDP, DoH and DoT against
+  `dnstt-server`. The AAR is about twice as large (11 MB, +3.5 MB per ABI).
+- The app does not use DoH/DoT yet (stage 3); it passes plain addresses as
+  before.
+
 ## Next steps
 
 0. **First release, for installing on the phone** (the user's top priority:
@@ -198,8 +218,8 @@ Solution:
    (covers 3.1, 3.3, 3.5 and 3.6). Order: build the Go library in CI, DoH/DoT in
    Go, then in the app for DNSTT, then Slipstream through a local UDP→DoH/DoT
    bridge, then tun2socks (hev-socks5-tunnel, fake-IP DNS, IPv6), then an
-   optional tunnel-DNS mode. Stage 1 (Go library in CI) is done; next is
-   stage 2, DoH/DoT in the Go library.
+   optional tunnel-DNS mode. Stages 1 (Go library in CI) and 2 (DoH/DoT in
+   the Go library) are done; next is stage 3, DoH/DoT for DNSTT in the app.
 
 ## Working notes
 
@@ -234,6 +254,9 @@ Solution:
   `raw.githubusercontent.com` are readable.
 - `workflow_dispatch` buttons only exist for workflows on the default branch
   `main`; `ci.yml` runs on every push to any branch.
+- Go tests: `cd go_src && go test ./...` (about 15 s; the end-to-end test is
+  in `dnstt-server/e2e_test.go`). `go vet ./...` still fails on upstream
+  tests in `go_src/noise`; vet the other packages by name.
 - Run tests (after `./scripts/build_aar.sh`):
   - `flutter test test/socks5_auth_relay_test.dart`
   - `cd android && ./gradlew :app:testDebugUnitTest --tests 'xyz.dnstt.app.Socks5AuthRelayTest'`

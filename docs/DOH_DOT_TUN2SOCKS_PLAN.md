@@ -384,6 +384,8 @@ Done when: CI APKs work with the AAR built from `go_src` at that commit.
 
 ### Stage 2. DoH/DoT in the Go library
 
+Detailed plan and result: `docs/STAGE2_GO_DOH_DOT.md`.
+
 1. Create `go_src/client` from `dnstt-client` (encoder, DoH, DoT, uTLS,
    weighted list); `dnstt-client` uses it; move the tests. No behaviour change.
 2. `resolver.go` and `dialer.go`: spec parser, bootstrap, protect hook, uTLS

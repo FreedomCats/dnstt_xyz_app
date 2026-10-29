@@ -27,6 +27,10 @@ var (
 	clientLock sync.Mutex
 	lastError  string
 
+	// Bridges by port
+	bridges     = map[int]*mobile.Bridge{}
+	bridgesLock sync.Mutex
+
 	// For testing - use a different port range to avoid conflicts
 	testPortCounter int = 17000
 	testPortLock    sync.Mutex
@@ -58,6 +62,86 @@ func dnstt_create_client(dnsServer *C.char, tunnelDomain *C.char, pubKeyHex *C.c
 	client = c
 	log.Printf("dnstt client created")
 	return 0
+}
+
+//export dnstt_set_bootstrap
+// dnstt_set_bootstrap sets the IP address used instead of resolving the host name of a DoH or
+// DoT resolver ("" to resolve it). Call after dnstt_create_client, before dnstt_start.
+func dnstt_set_bootstrap(addr *C.char) C.int {
+	clientLock.Lock()
+	defer clientLock.Unlock()
+
+	if client == nil {
+		lastError = "client not created"
+		return -1
+	}
+	client.SetBootstrap(C.GoString(addr))
+	return 0
+}
+
+//export dnstt_set_tls_fingerprint
+// dnstt_set_tls_fingerprint sets the TLS fingerprint distribution for DoH and DoT ("" for the
+// default). Call after dnstt_create_client, before dnstt_start.
+func dnstt_set_tls_fingerprint(spec *C.char) C.int {
+	clientLock.Lock()
+	defer clientLock.Unlock()
+
+	if client == nil {
+		lastError = "client not created"
+		return -1
+	}
+	client.SetTLSFingerprint(C.GoString(spec))
+	return 0
+}
+
+//export dnstt_resolver_kind
+// dnstt_resolver_kind returns "udp", "doh", "dot", or "" for an invalid resolver spec. Free the
+// result with dnstt_free_string.
+func dnstt_resolver_kind(spec *C.char) *C.char {
+	return C.CString(mobile.ResolverKind(C.GoString(spec)))
+}
+
+//export dnstt_bridge_start
+// dnstt_bridge_start starts a local UDP DNS server on 127.0.0.1 that forwards queries to the
+// resolver. Returns its port, or -1 on failure.
+func dnstt_bridge_start(spec *C.char, bootstrap *C.char, fingerprint *C.char) C.int {
+	b, err := mobile.StartBridge(C.GoString(spec), C.GoString(bootstrap), C.GoString(fingerprint))
+	if err != nil {
+		lastError = fmt.Sprintf("failed to start bridge: %v", err)
+		return -1
+	}
+	port := b.Port()
+	bridgesLock.Lock()
+	bridges[port] = b
+	bridgesLock.Unlock()
+	return C.int(port)
+}
+
+//export dnstt_bridge_stop
+// dnstt_bridge_stop stops the bridge started on port.
+func dnstt_bridge_stop(port C.int) C.int {
+	bridgesLock.Lock()
+	b := bridges[int(port)]
+	delete(bridges, int(port))
+	bridgesLock.Unlock()
+	if b == nil {
+		return 0
+	}
+	b.Stop()
+	return 0
+}
+
+//export dnstt_probe_resolver
+// dnstt_probe_resolver sends one DNSTT query for tunnelDomain through the resolver. Returns the
+// time to the answer in milliseconds, or -1 (message in dnstt_get_last_error).
+func dnstt_probe_resolver(spec *C.char, bootstrap *C.char, fingerprint *C.char, tunnelDomain *C.char, timeoutMs C.int) C.int {
+	latency, err := mobile.ProbeResolver(C.GoString(spec), C.GoString(bootstrap), C.GoString(fingerprint),
+		C.GoString(tunnelDomain), int(timeoutMs))
+	if err != nil {
+		lastError = err.Error()
+		return -1
+	}
+	return C.int(latency)
 }
 
 //export dnstt_start
@@ -134,7 +218,7 @@ func getNextTestPort() int {
 // 2. Making an HTTP request through the SOCKS5 proxy
 // 3. Returns latency in milliseconds on success, -1 on failure
 func dnstt_test_dns_server(dnsServer *C.char, tunnelDomain *C.char, pubKeyHex *C.char, testUrl *C.char, timeoutMs C.int) C.int {
-	return testDnsServer(C.GoString(dnsServer), C.GoString(tunnelDomain), C.GoString(pubKeyHex), C.GoString(testUrl),
+	return testDnsServer(C.GoString(dnsServer), "", "", C.GoString(tunnelDomain), C.GoString(pubKeyHex), C.GoString(testUrl),
 		time.Duration(timeoutMs)*time.Millisecond, nil)
 }
 
@@ -146,11 +230,24 @@ func dnstt_test_dns_server_auth(dnsServer *C.char, tunnelDomain *C.char, pubKeyH
 	if user := C.GoString(socksUsername); user != "" {
 		auth = &proxy.Auth{User: user, Password: C.GoString(socksPassword)}
 	}
-	return testDnsServer(C.GoString(dnsServer), C.GoString(tunnelDomain), C.GoString(pubKeyHex), C.GoString(testUrl),
+	return testDnsServer(C.GoString(dnsServer), "", "", C.GoString(tunnelDomain), C.GoString(pubKeyHex), C.GoString(testUrl),
 		time.Duration(timeoutMs)*time.Millisecond, auth)
 }
 
-func testDnsServer(dns, domain, pubKey, url string, timeout time.Duration, auth *proxy.Auth) C.int {
+//export dnstt_test_dns_server_ex
+// dnstt_test_dns_server_ex is dnstt_test_dns_server with a bootstrap address and TLS fingerprint
+// for DoH and DoT resolvers ("" for none and the default) and optional SOCKS5 credentials ("" for
+// none).
+func dnstt_test_dns_server_ex(dnsServer *C.char, bootstrap *C.char, fingerprint *C.char, tunnelDomain *C.char, pubKeyHex *C.char, testUrl *C.char, timeoutMs C.int, socksUsername *C.char, socksPassword *C.char) C.int {
+	var auth *proxy.Auth
+	if user := C.GoString(socksUsername); user != "" {
+		auth = &proxy.Auth{User: user, Password: C.GoString(socksPassword)}
+	}
+	return testDnsServer(C.GoString(dnsServer), C.GoString(bootstrap), C.GoString(fingerprint), C.GoString(tunnelDomain),
+		C.GoString(pubKeyHex), C.GoString(testUrl), time.Duration(timeoutMs)*time.Millisecond, auth)
+}
+
+func testDnsServer(dns, bootstrap, fingerprint, domain, pubKey, url string, timeout time.Duration, auth *proxy.Auth) C.int {
 
 	// Get a unique port for this test
 	port := getNextTestPort()
@@ -165,6 +262,9 @@ func testDnsServer(dns, domain, pubKey, url string, timeout time.Duration, auth 
 		log.Printf("Test failed: %s", lastError)
 		return -1
 	}
+
+	testClient.SetBootstrap(bootstrap)
+	testClient.SetTLSFingerprint(fingerprint)
 
 	// Start the client
 	err = testClient.Start()

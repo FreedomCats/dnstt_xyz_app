@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"bytes"
@@ -62,6 +62,8 @@ type DNSPacketConn struct {
 	// Sending on pollChan permits sendLoop to send an empty polling query.
 	// sendLoop also does its own polling according to a time schedule.
 	pollChan chan struct{}
+	// transport carries the encoded DNS messages.
+	transport net.PacketConn
 	// QueuePacketConn is the direct receiver of ReadFrom and WriteTo calls.
 	// recvLoop and sendLoop take the messages out of the receive and send
 	// queues and actually put them on the network.
@@ -71,7 +73,8 @@ type DNSPacketConn struct {
 // NewDNSPacketConn creates a new DNSPacketConn. transport, through its WriteTo
 // and ReadFrom methods, handles the actual sending and receiving the DNS
 // messages encoded by DNSPacketConn. addr is the address to be passed to
-// transport.WriteTo whenever a message needs to be sent.
+// transport.WriteTo whenever a message needs to be sent. The DNSPacketConn
+// owns transport: Close closes it.
 func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dns.Name) *DNSPacketConn {
 	// Generate a new random ClientID.
 	clientID := turbotunnel.NewClientID()
@@ -79,6 +82,7 @@ func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dns.Name) 
 		clientID:        clientID,
 		domain:          domain,
 		pollChan:        make(chan struct{}, pollLimit),
+		transport:       transport,
 		QueuePacketConn: turbotunnel.NewQueuePacketConn(clientID, 0),
 	}
 	go func() {
@@ -94,6 +98,13 @@ func NewDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dns.Name) 
 		}
 	}()
 	return c
+}
+
+// Close stops the send and receive loops and closes the transport.
+func (c *DNSPacketConn) Close() error {
+	err := c.QueuePacketConn.Close()
+	c.transport.Close()
+	return err
 }
 
 // dnsResponsePayload extracts the downstream payload of a DNS response, encoded
@@ -187,6 +198,9 @@ func (c *DNSPacketConn) recvLoop(transport net.PacketConn) error {
 		var buf [4096]byte
 		n, addr, err := transport.ReadFrom(buf[:])
 		if err != nil {
+			if c.isClosed() {
+				return nil
+			}
 			if err, ok := err.(net.Error); ok && err.Temporary() {
 				log.Printf("ReadFrom temporary error: %v", err)
 				continue
@@ -280,14 +294,31 @@ func chunks(p []byte, n int) [][]byte {
 //
 //	ingesrkokreujy6zumkse43vobsxey3bnruwm4tbm5uwy2ltoruwgzlyobuwc3d.jmrxwg2lpovzq.t.example.com
 func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) error {
+	query, err := encodeQuery(c.clientID, c.domain, p)
+	if err != nil {
+		return err
+	}
+	buf, err := query.WireFormat()
+	if err != nil {
+		return err
+	}
+
+	_, err = transport.WriteTo(buf, addr)
+	return err
+}
+
+// encodeQuery encodes p, which must be shorter than 224 bytes, into a DNS
+// query from clientID under domain, as described for DNSPacketConn.send. An
+// empty p gives a polling query.
+func encodeQuery(clientID turbotunnel.ClientID, domain dns.Name, p []byte) (*dns.Message, error) {
 	var decoded []byte
 	{
 		if len(p) >= 224 {
-			return fmt.Errorf("too long")
+			return nil, fmt.Errorf("too long")
 		}
 		var buf bytes.Buffer
 		// ClientID
-		buf.Write(c.clientID[:])
+		buf.Write(clientID[:])
 		n := numPadding
 		if len(p) == 0 {
 			n = numPaddingForPoll
@@ -307,15 +338,15 @@ func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) 
 	base32Encoding.Encode(encoded, decoded)
 	encoded = bytes.ToLower(encoded)
 	labels := chunks(encoded, 63)
-	labels = append(labels, c.domain...)
+	labels = append(labels, domain...)
 	name, err := dns.NewName(labels)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	var id uint16
 	binary.Read(rand.Reader, binary.BigEndian, &id)
-	query := &dns.Message{
+	return &dns.Message{
 		ID:    id,
 		Flags: 0x0100, // QR = 0, RD = 1
 		Question: []dns.Question{
@@ -335,14 +366,7 @@ func (c *DNSPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) 
 				Data:  []byte{},
 			},
 		},
-	}
-	buf, err := query.WireFormat()
-	if err != nil {
-		return err
-	}
-
-	_, err = transport.WriteTo(buf, addr)
-	return err
+	}, nil
 }
 
 // sendLoop takes packets that have been written using c.WriteTo, and sends them
@@ -365,6 +389,9 @@ func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error 
 			case <-c.pollChan:
 			case <-pollTimer.C:
 				pollTimerExpired = true
+			case <-c.QueuePacketConn.Closed():
+				pollTimer.Stop()
+				return nil
 			}
 		}
 
@@ -400,8 +427,20 @@ func (c *DNSPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) error 
 		// trying to send more than one packet per query.
 		err := c.send(transport, p, addr)
 		if err != nil {
+			if c.isClosed() {
+				return nil
+			}
 			log.Printf("send: %v", err)
 			continue
 		}
+	}
+}
+
+func (c *DNSPacketConn) isClosed() bool {
+	select {
+	case <-c.QueuePacketConn.Closed():
+		return true
+	default:
+		return false
 	}
 }

@@ -2,11 +2,8 @@
 package mobile
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/base32"
-	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,69 +13,86 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xtaci/kcp-go/v5"
-	"github.com/xtaci/smux"
+	"www.bamsoftware.com/git/dnstt.git/client"
 	"www.bamsoftware.com/git/dnstt.git/dns"
 	"www.bamsoftware.com/git/dnstt.git/noise"
-	"www.bamsoftware.com/git/dnstt.git/turbotunnel"
 )
 
 const (
-	// smux streams will be closed after this much time without receiving data.
-	idleTimeout = 2 * time.Minute
-
-	// Connection timeout for handshake (10 seconds for faster feedback)
+	// How long connecting to a UDP resolver and the Noise handshake may
+	// take (10 seconds for faster feedback).
 	handshakeTimeout = 10 * time.Second
 
-	// Padding configuration
-	numPadding        = 3
-	numPaddingForPoll = 8
+	// The same for DoH and DoT, which first set up a TLS connection to the
+	// resolver.
+	handshakeTimeoutTLS = 20 * time.Second
 
-	// Poll timing
-	initPollDelay       = 500 * time.Millisecond
-	maxPollDelay        = 10 * time.Second
-	pollDelayMultiplier = 2.0
-	pollLimit           = 16
+	// How long setting up a bridge's DoT connection may take.
+	bridgeTimeout = 20 * time.Second
 )
 
-// base32Encoding is a base32 encoding without padding.
-var base32Encoding = base32.StdEncoding.WithPadding(base32.NoPadding)
-
-// ProtectSocketFunc is a callback to protect a socket from VPN routing
-type ProtectSocketFunc func(fd int) bool
+// SocketProtector keeps a socket out of the VPN: on Android, implement it with
+// VpnService.protect.
+type SocketProtector interface {
+	Protect(fd int) bool
+}
 
 // DnsttClient wraps the dnstt tunnel client
 type DnsttClient struct {
-	mu            sync.Mutex
-	running       bool
-	listener      net.Listener
-	conn          net.PacketConn
-	ctx           context.Context
-	cancel        context.CancelFunc
-	pubKey        []byte
-	domain        string
-	dnsAddr       string
-	listenAddr    string
-	sess          *smux.Session
-	tunFd         int
-	protectSocket ProtectSocketFunc
-	shareProxy    bool // If true, bind to 0.0.0.0 instead of 127.0.0.1
+	mu             sync.Mutex
+	running        bool
+	listener       net.Listener
+	tunnel         *client.Tunnel
+	ctx            context.Context
+	cancel         context.CancelFunc
+	pubKey         []byte
+	domain         string
+	resolver       client.Resolver
+	bootstrap      string
+	tlsFingerprint string
+	listenAddr     string
+	tunFd          int
+	protector      SocketProtector
+	shareProxy     bool // If true, bind to 0.0.0.0 instead of 127.0.0.1
 }
 
-// NewClient creates a new dnstt client
-func NewClient(dnsServer, tunnelDomain, pubKeyHex, listenAddr string) (*DnsttClient, error) {
+// NewClient creates a new dnstt client. resolver is a resolver spec: an IP
+// address (UDP, port 53 by default), "udp://host[:port]",
+// "https://host[:port]/path" (DoH) or "tls://host[:port]" (DoT).
+func NewClient(resolver, tunnelDomain, pubKeyHex, listenAddr string) (*DnsttClient, error) {
 	pubKey, err := noise.DecodeKey(pubKeyHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid public key: %v", err)
+	}
+	r, err := client.ParseResolver(resolver)
+	if err != nil {
+		return nil, fmt.Errorf("invalid DNS server: %v", err)
 	}
 
 	return &DnsttClient{
 		pubKey:     pubKey,
 		domain:     tunnelDomain,
-		dnsAddr:    dnsServer,
+		resolver:   r,
 		listenAddr: listenAddr,
 		tunFd:      -1,
 	}, nil
+}
+
+// SetBootstrap sets the IP address to connect to instead of resolving the host
+// name of a DoH or DoT resolver ("" to resolve it). Call before Start.
+func (c *DnsttClient) SetBootstrap(addr string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.bootstrap = addr
+}
+
+// SetTLSFingerprint sets the TLS fingerprint distribution for DoH and DoT,
+// such as "Chrome", "3*Chrome,1*Firefox" or "none" ("" for the default). Call
+// before Start.
+func (c *DnsttClient) SetTLSFingerprint(spec string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.tlsFingerprint = spec
 }
 
 // SetTunFd sets the TUN file descriptor for routing traffic
@@ -86,11 +100,12 @@ func (c *DnsttClient) SetTunFd(fd int) {
 	c.tunFd = fd
 }
 
-// SetProtectSocket sets a callback to protect sockets from VPN routing
-func (c *DnsttClient) SetProtectSocket(protectFunc ProtectSocketFunc) {
+// SetSocketProtector sets a callback that keeps the tunnel's sockets out of
+// the VPN. Call before Start.
+func (c *DnsttClient) SetSocketProtector(p SocketProtector) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.protectSocket = protectFunc
+	c.protector = p
 }
 
 // SetShareProxy enables or disables proxy sharing (binding to 0.0.0.0)
@@ -107,6 +122,21 @@ func (c *DnsttClient) IsShareProxyEnabled() bool {
 	return c.shareProxy
 }
 
+// options returns the client options for reaching a resolver.
+func options(bootstrap, fingerprint string, protector SocketProtector) client.Options {
+	opts := client.Options{Bootstrap: bootstrap, TLSFingerprint: fingerprint}
+	if protector != nil {
+		opts.Protect = func(fd int) bool {
+			ok := protector.Protect(fd)
+			if ok {
+				log.Printf("socket protected from VPN routing (fd=%d)", fd)
+			}
+			return ok
+		}
+	}
+	return opts
+}
+
 // Start starts the SOCKS5 proxy
 func (c *DnsttClient) Start() error {
 	c.mu.Lock()
@@ -121,126 +151,33 @@ func (c *DnsttClient) Start() error {
 	if err != nil {
 		return fmt.Errorf("invalid domain: %v", err)
 	}
-
-	// Resolve DNS server address
-	dnsAddr := c.dnsAddr
-	if _, _, err := net.SplitHostPort(dnsAddr); err != nil {
-		dnsAddr = net.JoinHostPort(dnsAddr, "53")
-	}
-
-	remoteAddr, err := net.ResolveUDPAddr("udp", dnsAddr)
+	mtu, err := client.MTU(domain)
 	if err != nil {
-		return fmt.Errorf("failed to resolve DNS server: %v", err)
-	}
-
-	// Create UDP connection - bind to 0.0.0.0 (IPv4 only) to avoid IPv6 routing issues
-	localAddr := &net.UDPAddr{
-		IP:   net.IPv4zero,
-		Port: 0,
-	}
-	pconn, err := net.ListenUDP("udp4", localAddr)
-	if err != nil {
-		return fmt.Errorf("failed to create UDP socket: %v", err)
-	}
-
-	// Protect the socket from VPN routing if callback is set
-	if c.protectSocket != nil {
-		// Get the file descriptor from the UDP connection
-		rawConn, err := pconn.SyscallConn()
-		if err != nil {
-			pconn.Close()
-			return fmt.Errorf("failed to get socket control: %v", err)
-		}
-
-		var protectErr error
-		err = rawConn.Control(func(fd uintptr) {
-			if !c.protectSocket(int(fd)) {
-				protectErr = fmt.Errorf("failed to protect socket")
-			} else {
-				log.Printf("UDP socket protected from VPN routing (fd=%d)", fd)
-			}
-		})
-		if err != nil {
-			pconn.Close()
-			return fmt.Errorf("failed to control socket: %v", err)
-		}
-		if protectErr != nil {
-			pconn.Close()
-			return protectErr
-		}
-	}
-
-	c.conn = pconn
-
-	// Create context
-	c.ctx, c.cancel = context.WithCancel(context.Background())
-
-	// Calculate MTU
-	mtu := dnsNameCapacity(domain) - 8 - 1 - numPadding - 1
-	if mtu < 80 {
-		pconn.Close()
-		return fmt.Errorf("domain %s leaves only %d bytes for payload", domain, mtu)
+		return err
 	}
 	log.Printf("effective MTU %d", mtu)
 
-	// Wrap in DNSPacketConn
-	dnsConn := newDNSPacketConn(pconn, remoteAddr, domain)
+	timeout := handshakeTimeout
+	if c.resolver.Kind != client.KindUDP {
+		timeout = handshakeTimeoutTLS
+	}
+	connectCtx, cancelConnect := context.WithTimeout(context.Background(), timeout)
+	defer cancelConnect()
 
-	// Open KCP connection
-	kcpConn, err := kcp.NewConn2(remoteAddr, nil, 0, 0, dnsConn)
+	opts := options(c.bootstrap, c.tlsFingerprint, c.protector)
+	pconn, remoteAddr, err := client.Open(connectCtx, c.resolver, opts)
 	if err != nil {
-		pconn.Close()
-		return fmt.Errorf("opening KCP conn: %v", err)
+		return fmt.Errorf("failed to connect to DNS server: %v", err)
 	}
+	log.Printf("resolver %s (%s)", c.resolver.Kind, c.resolver)
 
-	// Configure KCP
-	kcpConn.SetStreamMode(true)
-	kcpConn.SetNoDelay(0, 0, 0, 1)
-	kcpConn.SetWindowSize(turbotunnel.QueueSize/2, turbotunnel.QueueSize/2)
-	if !kcpConn.SetMtu(mtu) {
-		kcpConn.Close()
-		pconn.Close()
-		return fmt.Errorf("failed to set MTU")
-	}
-
-	// Create Noise channel with timeout
-	type noiseResult struct {
-		conn io.ReadWriteCloser
-		err  error
-	}
-	noiseResultChan := make(chan noiseResult, 1)
-	go func() {
-		conn, err := noise.NewClient(kcpConn, c.pubKey)
-		noiseResultChan <- noiseResult{conn, err}
-	}()
-
-	var noiseConn io.ReadWriteCloser
-	select {
-	case result := <-noiseResultChan:
-		if result.err != nil {
-			kcpConn.Close()
-			pconn.Close()
-			return fmt.Errorf("failed to create noise session: %v", result.err)
+	tunnel, err := client.NewTunnel(connectCtx, pconn, remoteAddr, domain, c.pubKey)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("connection timeout: DNS server not responding")
 		}
-		noiseConn = result.conn
-	case <-time.After(handshakeTimeout):
-		kcpConn.Close()
-		pconn.Close()
-		return fmt.Errorf("connection timeout: DNS server not responding")
+		return fmt.Errorf("failed to create noise session: %v", err)
 	}
-
-	// Start smux session
-	smuxConfig := smux.DefaultConfig()
-	smuxConfig.Version = 2
-	smuxConfig.KeepAliveTimeout = idleTimeout
-	smuxConfig.MaxStreamBuffer = 1 * 1024 * 1024
-	sess, err := smux.Client(noiseConn, smuxConfig)
-	if err != nil {
-		noiseConn.Close()
-		pconn.Close()
-		return fmt.Errorf("opening smux session: %v", err)
-	}
-	c.sess = sess
 
 	// Determine the listen address based on proxy sharing
 	listenAddr := c.listenAddr
@@ -256,14 +193,16 @@ func (c *DnsttClient) Start() error {
 	// Start TCP listener for SOCKS5
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		sess.Close()
-		pconn.Close()
+		tunnel.Close()
 		return fmt.Errorf("failed to start listener: %v", err)
 	}
+
+	c.ctx, c.cancel = context.WithCancel(context.Background())
+	c.tunnel = tunnel
 	c.listener = listener
 
 	// Accept connections
-	go c.acceptLoop()
+	go c.acceptLoop(c.ctx, listener, tunnel)
 
 	c.running = true
 	log.Printf("dnstt client started, listening on %s", c.listenAddr)
@@ -282,15 +221,14 @@ func (c *DnsttClient) Stop() {
 	if c.cancel != nil {
 		c.cancel()
 	}
-	if c.sess != nil {
-		c.sess.Close()
-	}
 	if c.listener != nil {
 		c.listener.Close()
 	}
-	if c.conn != nil {
-		c.conn.Close()
+	if c.tunnel != nil {
+		c.tunnel.Close()
 	}
+	c.listener = nil
+	c.tunnel = nil
 
 	c.running = false
 	log.Printf("dnstt client stopped")
@@ -306,14 +244,14 @@ func (c *DnsttClient) IsRunning() bool {
 // DialTunnel creates a connection through the tunnel to the specified address
 func (c *DnsttClient) DialTunnel(address string) (net.Conn, error) {
 	c.mu.Lock()
-	sess := c.sess
+	tunnel := c.tunnel
 	c.mu.Unlock()
 
-	if sess == nil {
+	if tunnel == nil {
 		return nil, fmt.Errorf("tunnel not connected")
 	}
 
-	stream, err := sess.OpenStream()
+	stream, err := tunnel.OpenStream()
 	if err != nil {
 		return nil, err
 	}
@@ -321,30 +259,29 @@ func (c *DnsttClient) DialTunnel(address string) (net.Conn, error) {
 	return stream, nil
 }
 
-func (c *DnsttClient) acceptLoop() {
+func (c *DnsttClient) acceptLoop(ctx context.Context, listener net.Listener, tunnel *client.Tunnel) {
 	for {
-		select {
-		case <-c.ctx.Done():
-			return
-		default:
-		}
-
-		conn, err := c.listener.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
-			if c.ctx.Err() != nil {
+			if ctx.Err() != nil {
 				return
 			}
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
+			log.Printf("accept: %v", err)
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 
-		go c.handleConnection(conn.(*net.TCPConn))
+		go handleConnection(conn.(*net.TCPConn), tunnel)
 	}
 }
 
-func (c *DnsttClient) handleConnection(local *net.TCPConn) {
+func handleConnection(local *net.TCPConn, tunnel *client.Tunnel) {
 	defer local.Close()
 
-	stream, err := c.sess.OpenStream()
+	stream, err := tunnel.OpenStream()
 	if err != nil {
 		log.Printf("failed to open stream: %v", err)
 		return
@@ -369,254 +306,81 @@ func (c *DnsttClient) handleConnection(local *net.TCPConn) {
 	wg.Wait()
 }
 
-// dnsNameCapacity returns the number of bytes remaining for encoded data
-func dnsNameCapacity(domain dns.Name) int {
-	capacity := 255
-	capacity -= 1 // null terminator
-	for _, label := range domain {
-		capacity -= len(label) + 1
-	}
-	capacity = capacity * 63 / 64
-	capacity = capacity * 5 / 8
-	return capacity
-}
-
-// DNSPacketConn wraps a PacketConn to do DNS encoding/decoding
-type dnsPacketConn struct {
-	clientID turbotunnel.ClientID
-	domain   dns.Name
-	pollChan chan struct{}
-	*turbotunnel.QueuePacketConn
-}
-
-func newDNSPacketConn(transport net.PacketConn, addr net.Addr, domain dns.Name) *dnsPacketConn {
-	clientID := turbotunnel.NewClientID()
-	c := &dnsPacketConn{
-		clientID:        clientID,
-		domain:          domain,
-		pollChan:        make(chan struct{}, pollLimit),
-		QueuePacketConn: turbotunnel.NewQueuePacketConn(clientID, 0),
-	}
-	go c.recvLoop(transport)
-	go c.sendLoop(transport, addr)
-	return c
-}
-
-func (c *dnsPacketConn) recvLoop(transport net.PacketConn) {
-	for {
-		var buf [4096]byte
-		n, addr, err := transport.ReadFrom(buf[:])
-		if err != nil {
-			if err, ok := err.(net.Error); ok && err.Temporary() {
-				continue
-			}
-			return
-		}
-
-		resp, err := dns.MessageFromWireFormat(buf[:n])
-		if err != nil {
-			continue
-		}
-
-		payload := c.dnsResponsePayload(&resp)
-		if payload == nil {
-			continue
-		}
-
-		r := bytes.NewReader(payload)
-		any := false
-		for {
-			p, err := c.nextPacket(r)
-			if err != nil {
-				break
-			}
-			any = true
-			c.QueuePacketConn.QueueIncoming(p, addr)
-		}
-
-		if any {
-			select {
-			case c.pollChan <- struct{}{}:
-			default:
-			}
-		}
-	}
-}
-
-func (c *dnsPacketConn) dnsResponsePayload(resp *dns.Message) []byte {
-	if resp.Flags&0x8000 != 0x8000 {
-		return nil
-	}
-	if resp.Flags&0x000f != dns.RcodeNoError {
-		return nil
-	}
-	if len(resp.Answer) != 1 {
-		return nil
-	}
-	answer := resp.Answer[0]
-	_, ok := answer.Name.TrimSuffix(c.domain)
-	if !ok {
-		return nil
-	}
-	if answer.Type != dns.RRTypeTXT {
-		return nil
-	}
-	payload, err := dns.DecodeRDataTXT(answer.Data)
+// ResolverKind returns the transport of a resolver spec: "udp", "doh", "dot",
+// or "" if the spec is invalid.
+func ResolverKind(spec string) string {
+	r, err := client.ParseResolver(spec)
 	if err != nil {
-		return nil
+		return ""
 	}
-	return payload
+	return string(r.Kind)
 }
 
-func (c *dnsPacketConn) nextPacket(r *bytes.Reader) ([]byte, error) {
-	var n uint16
-	err := binary.Read(r, binary.BigEndian, &n)
+// UdpResolverAddr returns "host:port" (IPv6 in brackets) for a UDP resolver
+// spec, and "" for other kinds or an invalid spec.
+func UdpResolverAddr(spec string) string {
+	r, err := client.ParseResolver(spec)
+	if err != nil || r.Kind != client.KindUDP {
+		return ""
+	}
+	return r.Addr()
+}
+
+// Bridge is a local UDP DNS server on 127.0.0.1 that forwards queries to a
+// resolver over UDP, DoH or DoT (for slipstream-client, which speaks only
+// UDP).
+type Bridge struct {
+	bridge *client.Bridge
+}
+
+// StartBridge starts a bridge to the resolver given by spec, with an optional
+// bootstrap address and TLS fingerprint distribution as for DnsttClient.
+func StartBridge(spec, bootstrap, fingerprint string) (*Bridge, error) {
+	r, err := client.ParseResolver(spec)
+	if err != nil {
+		return nil, fmt.Errorf("invalid DNS server: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bridgeTimeout)
+	defer cancel()
+	b, err := client.NewBridge(ctx, r, options(bootstrap, fingerprint, nil))
 	if err != nil {
 		return nil, err
 	}
-	p := make([]byte, n)
-	_, err = io.ReadFull(r, p)
-	if err == io.EOF {
-		err = io.ErrUnexpectedEOF
-	}
-	return p, err
+	log.Printf("bridge to %s resolver on %s", r.Kind, b.Addr())
+	return &Bridge{bridge: b}, nil
 }
 
-func (c *dnsPacketConn) sendLoop(transport net.PacketConn, addr net.Addr) {
-	pollDelay := initPollDelay
-	pollTimer := time.NewTimer(pollDelay)
-	for {
-		var p []byte
-		outgoing := c.QueuePacketConn.OutgoingQueue(addr)
-		pollTimerExpired := false
-
-		select {
-		case p = <-outgoing:
-		default:
-			select {
-			case p = <-outgoing:
-			case <-c.pollChan:
-			case <-pollTimer.C:
-				pollTimerExpired = true
-			}
-		}
-
-		if len(p) > 0 {
-			select {
-			case <-c.pollChan:
-			default:
-			}
-		}
-
-		if pollTimerExpired {
-			pollDelay = time.Duration(float64(pollDelay) * pollDelayMultiplier)
-			if pollDelay > maxPollDelay {
-				pollDelay = maxPollDelay
-			}
-		} else {
-			if !pollTimer.Stop() {
-				<-pollTimer.C
-			}
-			pollDelay = initPollDelay
-		}
-		pollTimer.Reset(pollDelay)
-
-		err := c.send(transport, p, addr)
-		if err != nil {
-			log.Printf("send: %v", err)
-		}
-	}
+// Port returns the bridge's UDP port on 127.0.0.1.
+func (b *Bridge) Port() int {
+	return b.bridge.Addr().Port
 }
 
-func (c *dnsPacketConn) send(transport net.PacketConn, p []byte, addr net.Addr) error {
-	var decoded []byte
-	{
-		if len(p) >= 224 {
-			return fmt.Errorf("packet too long")
-		}
-		var buf bytes.Buffer
-		buf.Write(c.clientID[:])
-		n := numPadding
-		if len(p) == 0 {
-			n = numPaddingForPoll
-		}
-		buf.WriteByte(byte(224 + n))
-		io.CopyN(&buf, rand.Reader, int64(n))
-		if len(p) > 0 {
-			buf.WriteByte(byte(len(p)))
-			buf.Write(p)
-		}
-		decoded = buf.Bytes()
-	}
+// Stop stops the bridge.
+func (b *Bridge) Stop() {
+	b.bridge.Close()
+}
 
-	encoded := make([]byte, base32Encoding.EncodedLen(len(decoded)))
-	base32Encoding.Encode(encoded, decoded)
-	encoded = bytes.ToLower(encoded)
-	labels := chunks(encoded, 63)
-	labels = append(labels, c.domain...)
-	name, err := dns.NewName(labels)
+// ProbeResolver sends one DNSTT polling query for tunnelDomain through the
+// resolver and returns the time to the answer in milliseconds, connection
+// setup included. It fails if there is no answer within timeoutMs or the
+// answer is not NOERROR. The server holds a lone poll for up to a second, so
+// the time includes that wait.
+func ProbeResolver(spec, bootstrap, fingerprint, tunnelDomain string, timeoutMs int) (int, error) {
+	r, err := client.ParseResolver(spec)
 	if err != nil {
-		return err
+		return 0, fmt.Errorf("invalid DNS server: %v", err)
 	}
-
-	var id uint16
-	binary.Read(rand.Reader, binary.BigEndian, &id)
-	query := &dns.Message{
-		ID:    id,
-		Flags: 0x0100,
-		Question: []dns.Question{
-			{
-				Name:  name,
-				Type:  dns.RRTypeTXT,
-				Class: dns.ClassIN,
-			},
-		},
-		Additional: []dns.RR{
-			{
-				Name:  dns.Name{},
-				Type:  dns.RRTypeOPT,
-				Class: 4096,
-				TTL:   0,
-				Data:  []byte{},
-			},
-		},
-	}
-	wireData, err := query.WireFormat()
+	domain, err := dns.ParseName(tunnelDomain)
 	if err != nil {
-		return err
+		return 0, fmt.Errorf("invalid domain: %v", err)
 	}
-
-	_, err = transport.WriteTo(wireData, addr)
-	// Don't return error on network failures - just log and continue
-	// This prevents temporary network issues from killing the tunnel
-	if err != nil && !isNetworkClosedError(err) {
-		return err
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
+	latency, err := client.Probe(ctx, r, options(bootstrap, fingerprint, nil), domain)
+	if err != nil {
+		return 0, err
 	}
-	return nil
-}
-
-func isNetworkClosedError(err error) bool {
-	if err == nil {
-		return false
-	}
-	// Check for "use of closed network connection" and similar errors
-	errStr := err.Error()
-	return strings.Contains(errStr, "closed network connection") ||
-		strings.Contains(errStr, "broken pipe") ||
-		strings.Contains(errStr, "connection refused")
-}
-
-func chunks(p []byte, n int) [][]byte {
-	var result [][]byte
-	for len(p) > 0 {
-		sz := len(p)
-		if sz > n {
-			sz = n
-		}
-		result = append(result, p[:sz])
-		p = p[sz:]
-	}
-	return result
+	return int(latency.Milliseconds()), nil
 }
 
 // GetLocalIPAddresses returns a comma-separated list of local IP addresses

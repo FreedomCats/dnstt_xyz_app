@@ -1,4 +1,4 @@
-package main
+package client
 
 // Support code for TLS camouflage using uTLS.
 
@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/http2"
@@ -42,13 +43,33 @@ var utlsClientHelloIDMap = []struct {
 	{"Chrome_96", &utls.HelloChrome_96},
 	{"Chrome_100", &utls.HelloChrome_100},
 	{"Chrome_102", &utls.HelloChrome_102},
+	{"Chrome_106_Shuffle", &utls.HelloChrome_106_Shuffle},
 	{"Chrome_120", &utls.HelloChrome_120},
+	{"Chrome_120_PQ", &utls.HelloChrome_120_PQ},
+	{"Chrome_131", &utls.HelloChrome_131},
+	{"Chrome_133", &utls.HelloChrome_133},
+	{"Safari", &utls.HelloSafari_Auto},
+	{"Safari_16_0", &utls.HelloSafari_16_0},
+	{"Edge", &utls.HelloEdge_Auto},
+	{"Edge_85", &utls.HelloEdge_85},
+	{"Android_11_OkHttp", &utls.HelloAndroid_11_OkHttp},
 	{"iOS", &utls.HelloIOS_Auto},
 	{"iOS_11_1", &utls.HelloIOS_11_1},
 	{"iOS_12_1", &utls.HelloIOS_12_1},
 	{"iOS_13", &utls.HelloIOS_13},
 	{"iOS_14", &utls.HelloIOS_14},
 }
+
+// HTTP/2 health checks: ping after this long without receiving a frame, and
+// drop the connection if the ping is not answered in time. A connection that
+// died with a network change otherwise holds requests until they time out.
+const (
+	http2ReadIdleTimeout = 10 * time.Second
+	http2PingTimeout     = 5 * time.Second
+)
+
+// dialFunc makes the TCP connection under TLS.
+type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 // utlsLookup returns a *utls.ClientHelloID from utlsClientHelloIDMap by a
 // case-insensitive label match, or nil if there is no match.
@@ -61,10 +82,10 @@ func utlsLookup(label string) *utls.ClientHelloID {
 	return nil
 }
 
-// utlsDialContext connects to the given network address and initiates a TLS
-// handshake with the provided ClientHelloID, and returns the resulting TLS
-// connection.
-func utlsDialContext(ctx context.Context, network, addr string, config *utls.Config, id *utls.ClientHelloID) (*utls.UConn, error) {
+// utlsDialContext connects to the given network address with dial and
+// initiates a TLS handshake with the provided ClientHelloID, and returns the
+// resulting TLS connection.
+func utlsDialContext(ctx context.Context, network, addr string, config *utls.Config, id *utls.ClientHelloID, dial dialFunc) (*utls.UConn, error) {
 	// Set the SNI from addr, if not already set.
 	if config == nil {
 		config = &utls.Config{}
@@ -77,8 +98,7 @@ func utlsDialContext(ctx context.Context, network, addr string, config *utls.Con
 		}
 		config.ServerName = host
 	}
-	dialer := &net.Dialer{}
-	conn, err := dialer.DialContext(ctx, network, addr)
+	conn, err := dial(ctx, network, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +109,7 @@ func utlsDialContext(ctx context.Context, network, addr string, config *utls.Con
 	// will use the normal crypto/tls fingerprint. If a Write happens first,
 	// it will use the selected fingerprint as expected.
 	// https://github.com/refraction-networking/utls/issues/75
-	err = uconn.Handshake()
+	err = uconn.HandshakeContext(ctx)
 	if err != nil {
 		uconn.Close()
 		return nil, err
@@ -138,17 +158,33 @@ func utlsDialContext(ctx context.Context, network, addr string, config *utls.Con
 type utlsRoundTripper struct {
 	clientHelloID *utls.ClientHelloID
 	config        *utls.Config
+	dial          dialFunc
 	innerLock     sync.Mutex
 	inner         http.RoundTripper
 }
 
 // NewUTLSRoundTripper creates a utlsRoundTripper with the given TLS
-// configuration and ClientHelloID.
-func NewUTLSRoundTripper(config *utls.Config, id *utls.ClientHelloID) *utlsRoundTripper {
+// configuration and ClientHelloID. dial makes the TCP connections; nil means
+// a plain net.Dialer.
+func NewUTLSRoundTripper(config *utls.Config, id *utls.ClientHelloID, dial dialFunc) *utlsRoundTripper {
+	if dial == nil {
+		dial = (&net.Dialer{}).DialContext
+	}
 	return &utlsRoundTripper{
 		clientHelloID: id,
 		config:        config,
+		dial:          dial,
 		// inner will be set in the first call to RoundTrip.
+	}
+}
+
+// CloseIdleConnections closes the idle connections of the inner transport.
+func (rt *utlsRoundTripper) CloseIdleConnections() {
+	rt.innerLock.Lock()
+	inner := rt.inner
+	rt.innerLock.Unlock()
+	if c, ok := inner.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
 	}
 }
 
@@ -167,7 +203,7 @@ func (rt *utlsRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	if rt.inner == nil {
 		// On the first call, make an http.Transport or http2.Transport
 		// as appropriate.
-		rt.inner, err = makeRoundTripper(req, rt.config, rt.clientHelloID)
+		rt.inner, err = makeRoundTripper(req, rt.config, rt.clientHelloID, rt.dial)
 	}
 	rt.innerLock.Unlock()
 	if err != nil {
@@ -183,13 +219,13 @@ func (rt *utlsRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 // http2.Transport, depending on the negotated ALPN. The Transport is set up to
 // make future TLS connections using the same TLS configuration and
 // ClientHelloID.
-func makeRoundTripper(req *http.Request, config *utls.Config, id *utls.ClientHelloID) (http.RoundTripper, error) {
+func makeRoundTripper(req *http.Request, config *utls.Config, id *utls.ClientHelloID, dial dialFunc) (http.RoundTripper, error) {
 	addr, err := addrForDial(req.URL)
 	if err != nil {
 		return nil, err
 	}
 
-	bootstrapConn, err := utlsDialContext(req.Context(), "tcp", addr, config, id)
+	bootstrapConn, err := utlsDialContext(req.Context(), "tcp", addr, config, id, dial)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +249,7 @@ func makeRoundTripper(req *http.Request, config *utls.Config, id *utls.ClientHel
 		}
 
 		// Later dials make a new connection.
-		uconn, err := utlsDialContext(ctx, "tcp", addr, config, id)
+		uconn, err := utlsDialContext(ctx, "tcp", addr, config, id, dial)
 		if err != nil {
 			return nil, err
 		}
@@ -233,17 +269,21 @@ func makeRoundTripper(req *http.Request, config *utls.Config, id *utls.ClientHel
 		// timeouts, etc., so we are at the mercy of the defaults.
 		// https://github.com/golang/go/issues/16581
 		return &http2.Transport{
-			DialTLS: func(network, addr string, _ *tls.Config) (net.Conn, error) {
+			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
 				// Ignore the *tls.Config parameter; use our
 				// static config instead.
-				return dialTLSContext(context.Background(), network, addr)
+				return dialTLSContext(ctx, network, addr)
 			},
+			ReadIdleTimeout: http2ReadIdleTimeout,
+			PingTimeout:     http2PingTimeout,
 		}, nil
 	default:
 		// With http.Transport, copy important default fields from
 		// http.DefaultTransport, such as TLSHandshakeTimeout and
 		// IdleConnTimeout, before overriding DialTLSContext.
 		tr := http.DefaultTransport.(*http.Transport).Clone()
+		// No proxy from the environment, as in DoT mode.
+		tr.Proxy = nil
 		tr.DialTLSContext = dialTLSContext
 		return tr, nil
 	}
@@ -267,4 +307,13 @@ func addrForDial(url *url.URL) (string, error) {
 		}
 	}
 	return net.JoinHostPort(host, port), nil
+}
+
+// TLSFingerprintLabels returns the known fingerprint labels, for help texts.
+func TLSFingerprintLabels() []string {
+	labels := make([]string, 0, len(utlsClientHelloIDMap))
+	for _, entry := range utlsClientHelloIDMap {
+		labels = append(labels, entry.Label)
+	}
+	return labels
 }

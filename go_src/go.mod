@@ -6,7 +6,7 @@ toolchain go1.26.10
 
 require (
 	github.com/flynn/noise v1.0.0
-	github.com/refraction-networking/utls v1.6.6
+	github.com/refraction-networking/utls v1.8.2
 	github.com/xtaci/kcp-go/v5 v5.6.8
 	github.com/xtaci/smux v1.5.24
 	golang.org/x/crypto v0.47.0

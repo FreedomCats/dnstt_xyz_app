@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"bytes"
@@ -24,4 +24,13 @@ func TestDNSNameCapacity(t *testing.T) {
 			t.Errorf("length %v  capacity %v  %v", domainLen, capacity, err)
 		}
 	}
+}
+
+func mustParseName(t *testing.T, s string) dns.Name {
+	t.Helper()
+	name, err := dns.ParseName(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return name
 }

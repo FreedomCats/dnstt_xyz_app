@@ -1,10 +1,10 @@
-package main
+package client
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
@@ -17,6 +17,11 @@ import (
 // A default Retry-After delay to use when there is no explicit Retry-After
 // header in an HTTP response.
 const defaultRetryAfter = 10 * time.Second
+
+// How long an HTTP request may take. The DNSTT server answers within about a
+// second; a request that takes much longer most likely went to a connection
+// that died with a network change, and the senders should move on.
+const requestTimeout = 20 * time.Second
 
 // HTTPPacketConn is an HTTP-based transport for DNS messages, used for DNS over
 // HTTPS (DoH). Its WriteTo and ReadFrom methods exchange DNS messages over HTTP
@@ -47,6 +52,10 @@ type HTTPPacketConn struct {
 	notBefore     time.Time
 	notBeforeLock sync.RWMutex
 
+	// ctx is canceled by Close, aborting requests in flight.
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	// QueuePacketConn is the direct receiver of ReadFrom and WriteTo calls.
 	// sendLoop, via send, removes messages from the outgoing queue that
 	// were placed there by WriteTo, and inserts messages into the incoming
@@ -60,12 +69,15 @@ type HTTPPacketConn struct {
 // path components; e.g., "/dns-query". numSenders is the number of concurrent
 // sender-receiver goroutines to run.
 func NewHTTPPacketConn(rt http.RoundTripper, urlString string, numSenders int) (*HTTPPacketConn, error) {
+	ctx, cancel := context.WithCancel(context.Background())
 	c := &HTTPPacketConn{
 		client: &http.Client{
 			Transport: rt,
-			Timeout:   1 * time.Minute,
+			Timeout:   requestTimeout,
 		},
 		urlString:       urlString,
+		ctx:             ctx,
+		cancel:          cancel,
 		QueuePacketConn: turbotunnel.NewQueuePacketConn(turbotunnel.DummyAddr{}, 0),
 	}
 	for i := 0; i < numSenders; i++ {
@@ -74,10 +86,19 @@ func NewHTTPPacketConn(rt http.RoundTripper, urlString string, numSenders int) (
 	return c, nil
 }
 
+// Close stops the senders, aborts requests in flight and closes idle
+// connections to the server.
+func (c *HTTPPacketConn) Close() error {
+	err := c.QueuePacketConn.Close()
+	c.cancel()
+	c.client.CloseIdleConnections()
+	return err
+}
+
 // send sends a message in an HTTP request, and queues the body HTTP response to
 // be returned from a future call to ReadFrom.
 func (c *HTTPPacketConn) send(p []byte) error {
-	req, err := http.NewRequest("POST", c.urlString, bytes.NewReader(p))
+	req, err := http.NewRequestWithContext(c.ctx, "POST", c.urlString, bytes.NewReader(p))
 	if err != nil {
 		return err
 	}
@@ -95,7 +116,7 @@ func (c *HTTPPacketConn) send(p []byte) error {
 		if ct := resp.Header.Get("Content-Type"); ct != "application/dns-message" {
 			return fmt.Errorf("unknown HTTP response Content-Type %+q", ct)
 		}
-		body, err := ioutil.ReadAll(io.LimitReader(resp.Body, 64000))
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 64000))
 		if err == nil {
 			c.QueuePacketConn.QueueIncoming(body, turbotunnel.DummyAddr{})
 		}
@@ -142,7 +163,15 @@ func (c *HTTPPacketConn) send(p []byte) error {
 // sendLoop loops over the contents of the outgoing queue and passes them to
 // send. It drops packets while c.notBefore is in the future.
 func (c *HTTPPacketConn) sendLoop() {
-	for p := range c.QueuePacketConn.OutgoingQueue(turbotunnel.DummyAddr{}) {
+	outgoing := c.QueuePacketConn.OutgoingQueue(turbotunnel.DummyAddr{})
+	for {
+		var p []byte
+		select {
+		case p = <-outgoing:
+		case <-c.QueuePacketConn.Closed():
+			return
+		}
+
 		// Stop sending while we are rate-limiting ourselves (as a
 		// result of a Retry-After response header, for example).
 		c.notBeforeLock.RLock()
@@ -154,7 +183,7 @@ func (c *HTTPPacketConn) sendLoop() {
 		}
 
 		err := c.send(p)
-		if err != nil {
+		if err != nil && c.ctx.Err() == nil {
 			log.Printf("sendLoop: %v", err)
 		}
 	}
