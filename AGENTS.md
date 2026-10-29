@@ -1,5 +1,11 @@
 # Правила проекта для агентов
 
+## Language
+
+Code comments, commit messages, Claude memory and documentation (`README.md`,
+`CLAUDE.md`, `docs/`, Fastlane metadata) are written in English. Chatting with
+the user may be in any language.
+
 ## Личные данные — никогда в репозиторий
 
 **Это вопрос безопасности разработчика, а не аккуратности.** Приложение служит для
