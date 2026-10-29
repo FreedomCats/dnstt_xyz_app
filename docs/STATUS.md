@@ -18,6 +18,8 @@ environment details, servers, credentials or other personal data.
   7. CI builds and release signing (see below), then two CI fixes: generate
      the Gradle wrapper before the Kotlin tests; actions moved to their
      Node.js 24 versions.
+  8. Design and work plan for DoH/DoT and tun2socks
+     (`docs/DOH_DOT_TUN2SOCKS_PLAN.md`).
 - No pull requests are open yet. GitHub Actions are enabled in the fork, and
   the four signing secrets are set. No release has been made yet.
 
@@ -148,6 +150,11 @@ Solution:
       upstream tests in `go_src/noise`.
    5. Replace the hand-written TCP stack with a tun2socks implementation.
    6. DoH/DoT transport in the DNSTT mobile library.
+4. **DoH/DoT and tun2socks**: designed in `docs/DOH_DOT_TUN2SOCKS_PLAN.md`
+   (covers 3.1, 3.3, 3.5 and 3.6). Order: build the Go library in CI, DoH/DoT in
+   Go, then in the app for DNSTT, then Slipstream through a local UDP→DoH/DoT
+   bridge, then tun2socks (hev-socks5-tunnel, fake-IP DNS, IPv6), then an
+   optional tunnel-DNS mode. Not started; waiting for the user's go-ahead.
 
 ## Working notes
 
