@@ -1,4 +1,5 @@
 @AGENTS.md
+@docs/STATUS.md
 
 # DNSTT Client - Build & Development Guide
 
