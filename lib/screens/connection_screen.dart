@@ -377,6 +377,8 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
       dnsServer: state.activeDns!.address,
       tunnelDomain: state.activeConfig!.tunnelDomain,
       publicKey: state.activeConfig!.publicKey,
+      socksUsername: state.activeConfig!.upstreamSocksUsername,
+      socksPassword: state.activeConfig!.upstreamSocksPassword,
     );
 
     if (!success && mounted) {

@@ -309,6 +309,8 @@ class AppState extends ChangeNotifier {
           congestionControl: _activeConfig?.congestionControl ?? 'dcubic',
           keepAliveInterval: _activeConfig?.keepAliveInterval ?? 400,
           gso: _activeConfig?.gsoEnabled ?? false,
+          socksUsername: _activeConfig?.upstreamSocksUsername,
+          socksPassword: _activeConfig?.upstreamSocksPassword,
           onResult: (result) async {
             if (result.message == 'Cancelled') {
               _testingProgress++;
@@ -431,6 +433,8 @@ class AppState extends ChangeNotifier {
         congestionControl: _activeConfig?.congestionControl ?? 'dcubic',
         keepAliveInterval: _activeConfig?.keepAliveInterval ?? 400,
         gso: _activeConfig?.gsoEnabled ?? false,
+        socksUsername: _activeConfig?.upstreamSocksUsername,
+        socksPassword: _activeConfig?.upstreamSocksPassword,
       );
 
       await updateDnsServerStatus(

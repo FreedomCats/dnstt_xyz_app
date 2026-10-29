@@ -90,6 +90,44 @@ class DnsttVpnService : VpnService() {
     // Go-based dnstt client from gomobile library
     private var dnsttClient: mobile.DnsttClient? = null
 
+    // Authenticates to the upstream SOCKS5 proxy when credentials are configured
+    private var socksRelay: Socks5AuthRelay? = null
+
+    private val useSocksAuth: Boolean get() = !socksUsername.isNullOrEmpty()
+
+    /**
+     * Starts the tunnel client (via [startTunnel]) on the address local clients should reach.
+     * With upstream SOCKS5 credentials, the tunnel client listens on a free localhost port
+     * and [Socks5AuthRelay] takes its place on proxyHost:proxyPort.
+     */
+    private fun startTunnelWithRelay(startTunnel: (host: String, port: Int) -> Boolean): Boolean {
+        if (!useSocksAuth) {
+            return startTunnel(proxyHost, proxyPort)
+        }
+
+        val tunnelPort = Socks5AuthRelay.findFreePort()
+        if (!startTunnel("127.0.0.1", tunnelPort)) {
+            return false
+        }
+
+        val relay = Socks5AuthRelay(
+            proxyHost, proxyPort, "127.0.0.1", tunnelPort,
+            socksUsername!!, socksPassword ?: ""
+        )
+        if (!relay.start()) {
+            Log.e(TAG, "Failed to start SOCKS5 auth relay on $proxyHost:$proxyPort")
+            return false
+        }
+        socksRelay = relay
+        Log.d(TAG, "SOCKS5 auth relay started on $proxyHost:$proxyPort -> 127.0.0.1:$tunnelPort")
+        return true
+    }
+
+    private fun stopSocksRelay() {
+        socksRelay?.stop()
+        socksRelay = null
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         return when (intent?.action) {
             ACTION_CONNECT -> {
@@ -141,21 +179,27 @@ class DnsttVpnService : VpnService() {
             Log.d(TAG, "DNS Server: $dnsServer, Domain: $tunnelDomain")
             Log.d(TAG, "Listen address: $proxyHost:$proxyPort")
 
-            // Create the Go dnstt client
-            val listenAddr = "$proxyHost:$proxyPort"
-            dnsttClient = Mobile.newClient(dnsServer, tunnelDomain, publicKey, listenAddr)
+            val running = startTunnelWithRelay { host, port ->
+                // Create the Go dnstt client
+                val listenAddr = "$host:$port"
+                dnsttClient = Mobile.newClient(dnsServer, tunnelDomain, publicKey, listenAddr)
 
-            // Start the client (this may block while establishing connection)
-            dnsttClient?.start()
+                // Start the client (this may block while establishing connection)
+                dnsttClient?.start()
 
-            Log.d(TAG, "DNSTT client started successfully")
+                Log.d(TAG, "DNSTT client started successfully")
 
-            // Small delay to ensure socket is fully listening
-            Thread.sleep(100)
+                // Small delay to ensure socket is fully listening
+                Thread.sleep(100)
 
-            // Verify it's running
-            val running = dnsttClient?.isRunning ?: false
+                // Verify it's running
+                dnsttClient?.isRunning ?: false
+            }
             Log.d(TAG, "DNSTT client running: $running")
+            if (!running) {
+                stopDnsttClient()
+                return false
+            }
 
             if (running) {
                 // Try to verify SOCKS5 proxy is actually listening
@@ -291,6 +335,7 @@ class DnsttVpnService : VpnService() {
     }
 
     private fun stopDnsttClient() {
+        stopSocksRelay()
         dnsttClient?.let { client ->
             try {
                 client.stop()
@@ -331,20 +376,26 @@ class DnsttVpnService : VpnService() {
             Log.d(TAG, "DNS Server (resolver): $dnsServer, Domain: $tunnelDomain")
             Log.d(TAG, "Listen address: $proxyHost:$proxyPort")
 
-            slipstreamBridge = SlipstreamBridge()
-            val started = slipstreamBridge!!.startClient(
-                domain = tunnelDomain,
-                dnsServer = dnsServer,
-                congestionControl = congestionControl,
-                keepAliveInterval = keepAliveInterval,
-                port = proxyPort,
-                host = proxyHost,
-                gso = gso
-            )
+            val started = startTunnelWithRelay { host, port ->
+                slipstreamBridge = SlipstreamBridge()
+                val bridgeStarted = slipstreamBridge!!.startClient(
+                    domain = tunnelDomain,
+                    dnsServer = dnsServer,
+                    congestionControl = congestionControl,
+                    keepAliveInterval = keepAliveInterval,
+                    port = port,
+                    host = host,
+                    gso = gso
+                )
+                if (!bridgeStarted) {
+                    Log.e(TAG, "Slipstream client failed to start: ${slipstreamBridge?.lastError}")
+                    slipstreamBridge = null
+                }
+                bridgeStarted
+            }
 
             if (!started) {
-                Log.e(TAG, "Slipstream client failed to start: ${slipstreamBridge?.lastError}")
-                slipstreamBridge = null
+                stopSlipstreamClient()
                 return false
             }
 
@@ -365,6 +416,7 @@ class DnsttVpnService : VpnService() {
     }
 
     private fun stopSlipstreamClient() {
+        stopSocksRelay()
         slipstreamBridge?.let { bridge ->
             try {
                 bridge.stopClient()
@@ -630,9 +682,7 @@ class DnsttVpnService : VpnService() {
                             proxyHost,
                             proxyPort,
                             destHostAddress,
-                            dstPort,
-                            socksUsername,
-                            socksPassword
+                            dstPort
                         )
 
                         val tcpConnection = TcpConnection(

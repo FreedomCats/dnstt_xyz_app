@@ -44,6 +44,11 @@ android {
         }
     }
 
+    testOptions {
+        // Socks5AuthRelay logs through android.util.Log, which is a stub in JVM unit tests
+        unitTests.isReturnDefaultValues = true
+    }
+
     packaging {
         resources {
             excludes += listOf(
@@ -71,4 +76,6 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // JSch for SSH tunneling (dynamic port forwarding through DNSTT)
     implementation("com.github.mwiede:jsch:0.2.18")
+
+    testImplementation("junit:junit:4.13.2")
 }

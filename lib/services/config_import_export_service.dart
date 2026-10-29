@@ -82,6 +82,8 @@ class ConfigImportExportService {
           sshUsername: item['sshUsername']?.toString(),
           sshPassword: item['sshPassword']?.toString(),
           sshPrivateKey: item['sshPrivateKey']?.toString(),
+          socksUsername: item['socksUsername']?.toString(),
+          socksPassword: item['socksPassword']?.toString(),
           congestionControl: item['congestionControl']?.toString(),
           keepAliveInterval: item['keepAliveInterval'] is int
               ? item['keepAliveInterval']
@@ -145,6 +147,12 @@ class ConfigImportExportService {
           if (c.congestionControl != null) configMap['congestionControl'] = c.congestionControl;
           if (c.keepAliveInterval != null) configMap['keepAliveInterval'] = c.keepAliveInterval;
           if (c.gsoEnabled != null) configMap['gsoEnabled'] = c.gsoEnabled;
+        }
+
+        // Upstream SOCKS5 credentials
+        if (c.hasSocksAuth) {
+          configMap['socksUsername'] = c.socksUsername;
+          configMap['socksPassword'] = c.socksPassword ?? '';
         }
 
         // SSH settings

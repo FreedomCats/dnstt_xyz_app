@@ -235,6 +235,8 @@ class DnsttService {
     String congestionControl = 'dcubic',
     int keepAliveInterval = 400,
     bool gso = false,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     // Slipstream transport
     if (transportType == TransportType.slipstream && tunnelDomain != null) {
@@ -246,6 +248,8 @@ class DnsttService {
         congestionControl: congestionControl,
         keepAliveInterval: keepAliveInterval,
         gso: gso,
+        socksUsername: socksUsername,
+        socksPassword: socksPassword,
       );
     }
 
@@ -257,6 +261,8 @@ class DnsttService {
         publicKey: publicKey,
         testUrl: testUrl,
         timeout: timeout,
+        socksUsername: socksUsername,
+        socksPassword: socksPassword,
       );
     }
 
@@ -273,6 +279,8 @@ class DnsttService {
     String congestionControl = 'dcubic',
     int keepAliveInterval = 400,
     bool gso = false,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     if (isDesktopPlatform) {
       // Desktop: use SlipstreamService subprocess
@@ -285,6 +293,8 @@ class DnsttService {
           congestionControl: congestionControl,
           keepAliveInterval: keepAliveInterval,
           gso: gso,
+          socksUsername: socksUsername,
+          socksPassword: socksPassword,
         );
 
         if (result >= 0) {
@@ -323,6 +333,8 @@ class DnsttService {
         congestionControl: congestionControl,
         keepAliveInterval: keepAliveInterval,
         gso: gso,
+        socksUsername: socksUsername,
+        socksPassword: socksPassword,
       );
 
       if (result >= 0) {
@@ -361,6 +373,8 @@ class DnsttService {
     required String publicKey,
     required String testUrl,
     required Duration timeout,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     // On desktop, run the FFI test in a separate isolate to avoid blocking UI
     if (isDesktopPlatform) {
@@ -370,6 +384,8 @@ class DnsttService {
         publicKey: publicKey,
         testUrl: testUrl,
         timeoutMs: timeout.inMilliseconds,
+        socksUsername: socksUsername,
+        socksPassword: socksPassword,
       );
     }
 
@@ -385,6 +401,8 @@ class DnsttService {
         publicKey: publicKey,
         testUrl: testUrl,
         timeoutMs: timeout.inMilliseconds,
+        socksUsername: socksUsername,
+        socksPassword: socksPassword,
       );
 
       stopwatch.stop();
@@ -427,6 +445,8 @@ class DnsttService {
     required String publicKey,
     required String testUrl,
     required int timeoutMs,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     try {
       // Use compute to run in a separate isolate
@@ -436,6 +456,8 @@ class DnsttService {
         'publicKey': publicKey,
         'testUrl': testUrl,
         'timeoutMs': timeoutMs,
+        'socksUsername': socksUsername,
+        'socksPassword': socksPassword,
       });
 
       if (result >= 0) {
@@ -638,6 +660,8 @@ class DnsttService {
     String congestionControl = 'dcubic',
     int keepAliveInterval = 400,
     bool gso = false,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     final queue = List<DnsServer>.from(servers);
 
@@ -665,6 +689,8 @@ class DnsttService {
           congestionControl: congestionControl,
           keepAliveInterval: keepAliveInterval,
           gso: gso,
+          socksUsername: socksUsername,
+          socksPassword: socksPassword,
         );
 
         // Call onResult immediately after each test
@@ -695,6 +721,8 @@ class DnsttService {
           congestionControl: congestionControl,
           keepAliveInterval: keepAliveInterval,
           gso: gso,
+          socksUsername: socksUsername,
+          socksPassword: socksPassword,
         ));
       }
 
@@ -763,6 +791,8 @@ int _runFfiTest(Map<String, dynamic> params) {
   final publicKey = params['publicKey'] as String;
   final testUrl = params['testUrl'] as String;
   final timeoutMs = params['timeoutMs'] as int;
+  final socksUsername = params['socksUsername'] as String?;
+  final socksPassword = params['socksPassword'] as String?;
 
   try {
     // Load FFI library in this isolate
@@ -778,6 +808,8 @@ int _runFfiTest(Map<String, dynamic> params) {
       publicKey: publicKey,
       testUrl: testUrl,
       timeoutMs: timeoutMs,
+      socksUsername: socksUsername,
+      socksPassword: socksPassword,
     );
   } catch (e) {
     print('FFI test error in isolate: $e');

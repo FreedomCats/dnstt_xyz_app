@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'dnstt_ffi_service.dart';
 import 'slipstream_service.dart';
+import 'socks5_auth_relay.dart';
 import '../models/dnstt_config.dart';
 
 enum VpnState {
@@ -47,6 +48,39 @@ class VpnService {
 
   // Configurable proxy port
   int proxyPort = 1080;
+
+  // Desktop: authenticates to the upstream SOCKS5 proxy when credentials are configured
+  Socks5AuthRelay? _socksRelay;
+
+  /// Desktop: returns the port the tunnel client should listen on. With upstream SOCKS5
+  /// credentials, that is a free localhost port behind the auth relay; otherwise [proxyPort].
+  Future<int> _desktopTunnelPort(String? socksUsername) async {
+    if (socksUsername == null || socksUsername.isEmpty) return proxyPort;
+    return Socks5AuthRelay.findFreePort();
+  }
+
+  /// Desktop: starts the auth relay on [proxyPort] in front of the tunnel on [tunnelPort].
+  /// Does nothing when no upstream SOCKS5 credentials are configured.
+  Future<bool> _startDesktopRelay(int tunnelPort, String? socksUsername, String? socksPassword) async {
+    if (socksUsername == null || socksUsername.isEmpty) return true;
+    final relay = Socks5AuthRelay(
+      bindHost: '127.0.0.1',
+      bindPort: proxyPort,
+      upstreamHost: '127.0.0.1',
+      upstreamPort: tunnelPort,
+      username: socksUsername,
+      password: socksPassword ?? '',
+    );
+    if (!await relay.start()) return false;
+    _socksRelay = relay;
+    return true;
+  }
+
+  Future<void> _stopDesktopRelay() async {
+    final relay = _socksRelay;
+    _socksRelay = null;
+    await relay?.stop();
+  }
 
   /// Check if we're on a desktop platform
   static bool get isDesktopPlatform =>
@@ -153,6 +187,8 @@ class VpnService {
     String? dnsServer,
     String? tunnelDomain,
     String? publicKey,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     _currentState = VpnState.connecting;
     _stateController.add(_currentState);
@@ -169,6 +205,8 @@ class VpnService {
         dnsServer: dnsServer ?? '8.8.8.8',
         tunnelDomain: tunnelDomain ?? '',
         publicKey: publicKey ?? '',
+        socksUsername: socksUsername,
+        socksPassword: socksPassword,
       );
     }
 
@@ -194,6 +232,8 @@ class VpnService {
               'dnsServer': dnsServer ?? '8.8.8.8',
               'tunnelDomain': tunnelDomain ?? '',
               'publicKey': publicKey ?? '',
+              'socksUsername': socksUsername,
+              'socksPassword': socksPassword,
             };
 
       final result = await _channel.invokeMethod<bool>('connect', params);
@@ -355,6 +395,8 @@ class VpnService {
     required String dnsServer,
     required String tunnelDomain,
     required String publicKey,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     // Ensure mode flags are reset for regular DNSTT mode
     _isProxyMode = false;
@@ -375,11 +417,12 @@ class VpnService {
       }
 
       // Create the client
+      final tunnelPort = await _desktopTunnelPort(socksUsername);
       final created = ffi.createClient(
         dnsServer: dnsServer,
         tunnelDomain: tunnelDomain,
         publicKey: publicKey,
-        listenAddr: socksProxyAddress,
+        listenAddr: '127.0.0.1:$tunnelPort',
       );
 
       if (!created) {
@@ -398,6 +441,14 @@ class VpnService {
         return false;
       }
 
+      if (!await _startDesktopRelay(tunnelPort, socksUsername, socksPassword)) {
+        _lastError = 'Failed to start SOCKS5 auth relay on $socksProxyAddress';
+        ffi.stop();
+        _currentState = VpnState.error;
+        _stateController.add(_currentState);
+        return false;
+      }
+
       // Wait for proxy to be ready
       await Future.delayed(const Duration(milliseconds: 200));
 
@@ -405,7 +456,10 @@ class VpnService {
       print('Verifying DNSTT tunnel connectivity...');
       if (!await _verifyTunnelConnection(timeoutMs: 20000)) {
         print('DNSTT tunnel verification failed - connection not working');
-        _lastError = 'Tunnel verification failed - check domain and DNS server';
+        _lastError = _socksRelay != null
+            ? 'Tunnel verification failed - check domain, DNS server and SOCKS5 credentials'
+            : 'Tunnel verification failed - check domain and DNS server';
+        await _stopDesktopRelay();
         ffi.stop();
         _currentState = VpnState.error;
         _activeTransport = null;
@@ -432,6 +486,8 @@ class VpnService {
     String congestionControl = 'dcubic',
     int keepAliveInterval = 400,
     bool gso = false,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     _isProxyMode = false;
     _isSshTunnelMode = false;
@@ -441,10 +497,11 @@ class VpnService {
 
     try {
       final slipstream = SlipstreamService.instance;
+      final tunnelPort = await _desktopTunnelPort(socksUsername);
       final started = await slipstream.startClient(
         domain: tunnelDomain,
         dnsServerAddr: dnsServer,
-        listenPort: proxyPort,
+        listenPort: tunnelPort,
         congestionControl: congestionControl,
         keepAliveInterval: keepAliveInterval,
         gso: gso,
@@ -458,6 +515,15 @@ class VpnService {
         return false;
       }
 
+      if (!await _startDesktopRelay(tunnelPort, socksUsername, socksPassword)) {
+        _lastError = 'Failed to start SOCKS5 auth relay on $socksProxyAddress';
+        await slipstream.stopClient();
+        _currentState = VpnState.error;
+        _activeTransport = null;
+        _stateController.add(_currentState);
+        return false;
+      }
+
       // Wait for proxy to be ready
       await Future.delayed(const Duration(milliseconds: 200));
 
@@ -465,7 +531,10 @@ class VpnService {
       print('Verifying Slipstream tunnel connectivity...');
       if (!await _verifyTunnelConnection(timeoutMs: 15000)) {
         print('Slipstream tunnel verification failed - connection not working');
-        _lastError = 'Tunnel verification failed - check domain and DNS server';
+        _lastError = _socksRelay != null
+            ? 'Tunnel verification failed - check domain, DNS server and SOCKS5 credentials'
+            : 'Tunnel verification failed - check domain and DNS server';
+        await _stopDesktopRelay();
         await slipstream.stopClient();
         _currentState = VpnState.error;
         _activeTransport = null;
@@ -493,6 +562,8 @@ class VpnService {
     String congestionControl = 'dcubic',
     int keepAliveInterval = 400,
     bool gso = false,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     _currentState = VpnState.connecting;
     _stateController.add(_currentState);
@@ -511,6 +582,8 @@ class VpnService {
         congestionControl: congestionControl,
         keepAliveInterval: keepAliveInterval,
         gso: gso,
+        socksUsername: socksUsername,
+        socksPassword: socksPassword,
       );
     }
 
@@ -529,6 +602,8 @@ class VpnService {
         'congestionControl': congestionControl,
         'keepAliveInterval': keepAliveInterval,
         'gso': gso,
+        'socksUsername': socksUsername,
+        'socksPassword': socksPassword,
       });
 
       if (result == true) {
@@ -563,6 +638,8 @@ class VpnService {
     String congestionControl = 'dcubic',
     int keepAliveInterval = 400,
     bool gso = false,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     if (_isDesktop) {
       return connectSlipstream(
@@ -571,6 +648,8 @@ class VpnService {
         congestionControl: congestionControl,
         keepAliveInterval: keepAliveInterval,
         gso: gso,
+        socksUsername: socksUsername,
+        socksPassword: socksPassword,
       );
     }
 
@@ -599,6 +678,8 @@ class VpnService {
         'congestionControl': congestionControl,
         'keepAliveInterval': keepAliveInterval,
         'gso': gso,
+        'socksUsername': socksUsername,
+        'socksPassword': socksPassword,
       });
 
       if (result == true) {
@@ -674,6 +755,8 @@ class VpnService {
   /// Disconnect on desktop using FFI or Slipstream
   Future<bool> _disconnectDesktop() async {
     try {
+      await _stopDesktopRelay();
+
       // Stop slipstream if it's running
       if (SlipstreamService.instance.isRunning) {
         await SlipstreamService.instance.stopClient();
@@ -910,6 +993,8 @@ class VpnService {
     String? tunnelDomain,
     String? publicKey,
     int proxyPort = 1080,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     if (_isDesktop) {
       // Desktop always uses proxy mode
@@ -919,6 +1004,8 @@ class VpnService {
         dnsServer: dnsServer,
         tunnelDomain: tunnelDomain,
         publicKey: publicKey,
+        socksUsername: socksUsername,
+        socksPassword: socksPassword,
       );
     }
 
@@ -945,6 +1032,8 @@ class VpnService {
         'tunnelDomain': tunnelDomain ?? '',
         'publicKey': publicKey ?? '',
         'proxyPort': proxyPort,
+        'socksUsername': socksUsername,
+        'socksPassword': socksPassword,
       });
 
       if (result == true) {
@@ -1283,6 +1372,8 @@ class VpnService {
     required String publicKey,
     String testUrl = 'https://api.ipify.org?format=json',
     int timeoutMs = 15000,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     if (_isDesktop) {
       // Use FFI on desktop
@@ -1297,6 +1388,8 @@ class VpnService {
           publicKey: publicKey,
           testUrl: testUrl,
           timeoutMs: timeoutMs,
+          socksUsername: socksUsername,
+          socksPassword: socksPassword,
         );
       } catch (e) {
         print('FFI test error: $e');
@@ -1316,6 +1409,8 @@ class VpnService {
         'publicKey': publicKey,
         'testUrl': testUrl,
         'timeoutMs': timeoutMs,
+        'socksUsername': socksUsername,
+        'socksPassword': socksPassword,
       });
       return result ?? -1;
     } on MissingPluginException {
@@ -1336,6 +1431,8 @@ class VpnService {
     String congestionControl = 'dcubic',
     int keepAliveInterval = 400,
     bool gso = false,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     if (_isDesktop) {
       // Use subprocess on desktop
@@ -1348,6 +1445,8 @@ class VpnService {
           congestionControl: congestionControl,
           keepAliveInterval: keepAliveInterval,
           gso: gso,
+          socksUsername: socksUsername,
+          socksPassword: socksPassword,
         );
       } catch (e) {
         print('Slipstream test error: $e');
@@ -1367,6 +1466,8 @@ class VpnService {
         'congestionControl': congestionControl,
         'keepAliveInterval': keepAliveInterval,
         'gso': gso,
+        'socksUsername': socksUsername,
+        'socksPassword': socksPassword,
       });
       return result ?? -1;
     } on MissingPluginException {

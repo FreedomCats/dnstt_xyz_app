@@ -134,11 +134,23 @@ func getNextTestPort() int {
 // 2. Making an HTTP request through the SOCKS5 proxy
 // 3. Returns latency in milliseconds on success, -1 on failure
 func dnstt_test_dns_server(dnsServer *C.char, tunnelDomain *C.char, pubKeyHex *C.char, testUrl *C.char, timeoutMs C.int) C.int {
-	dns := C.GoString(dnsServer)
-	domain := C.GoString(tunnelDomain)
-	pubKey := C.GoString(pubKeyHex)
-	url := C.GoString(testUrl)
-	timeout := time.Duration(timeoutMs) * time.Millisecond
+	return testDnsServer(C.GoString(dnsServer), C.GoString(tunnelDomain), C.GoString(pubKeyHex), C.GoString(testUrl),
+		time.Duration(timeoutMs)*time.Millisecond, nil)
+}
+
+//export dnstt_test_dns_server_auth
+// dnstt_test_dns_server_auth is dnstt_test_dns_server for a server whose upstream SOCKS5 proxy
+// requires username/password authentication (RFC 1929).
+func dnstt_test_dns_server_auth(dnsServer *C.char, tunnelDomain *C.char, pubKeyHex *C.char, testUrl *C.char, timeoutMs C.int, socksUsername *C.char, socksPassword *C.char) C.int {
+	var auth *proxy.Auth
+	if user := C.GoString(socksUsername); user != "" {
+		auth = &proxy.Auth{User: user, Password: C.GoString(socksPassword)}
+	}
+	return testDnsServer(C.GoString(dnsServer), C.GoString(tunnelDomain), C.GoString(pubKeyHex), C.GoString(testUrl),
+		time.Duration(timeoutMs)*time.Millisecond, auth)
+}
+
+func testDnsServer(dns, domain, pubKey, url string, timeout time.Duration, auth *proxy.Auth) C.int {
 
 	// Get a unique port for this test
 	port := getNextTestPort()
@@ -172,7 +184,7 @@ func dnstt_test_dns_server(dnsServer *C.char, tunnelDomain *C.char, pubKeyHex *C
 	time.Sleep(100 * time.Millisecond)
 
 	// Create SOCKS5 dialer
-	dialer, err := proxy.SOCKS5("tcp", listenAddr, nil, proxy.Direct)
+	dialer, err := proxy.SOCKS5("tcp", listenAddr, auth, proxy.Direct)
 	if err != nil {
 		lastError = fmt.Sprintf("failed to create SOCKS5 dialer: %v", err)
 		log.Printf("Test failed: %s", lastError)

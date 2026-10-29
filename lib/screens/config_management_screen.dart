@@ -783,6 +783,8 @@ class _ConfigDialogState extends State<_ConfigDialog> {
   late TextEditingController domainController;
   late TextEditingController sshUsernameController;
   late TextEditingController sshPasswordController;
+  late TextEditingController socksUsernameController;
+  late TextEditingController socksPasswordController;
 
   late TunnelType selectedTunnelType;
   late TransportType selectedTransportType;
@@ -790,6 +792,7 @@ class _ConfigDialogState extends State<_ConfigDialog> {
   late int keepAliveInterval;
   late bool gsoEnabled;
   bool showPassword = false;
+  bool showSocksPassword = false;
 
   @override
   void initState() {
@@ -799,6 +802,8 @@ class _ConfigDialogState extends State<_ConfigDialog> {
     domainController = TextEditingController(text: widget.existingConfig?.tunnelDomain ?? '');
     sshUsernameController = TextEditingController(text: widget.existingConfig?.sshUsername ?? '');
     sshPasswordController = TextEditingController(text: widget.existingConfig?.sshPassword ?? '');
+    socksUsernameController = TextEditingController(text: widget.existingConfig?.socksUsername ?? '');
+    socksPasswordController = TextEditingController(text: widget.existingConfig?.socksPassword ?? '');
     selectedTunnelType = widget.existingConfig?.tunnelType ?? TunnelType.socks5;
     selectedTransportType = widget.existingConfig?.transportType ?? TransportType.dnstt;
     selectedCongestionControl = widget.existingConfig?.congestionControl ?? 'dcubic';
@@ -813,6 +818,8 @@ class _ConfigDialogState extends State<_ConfigDialog> {
     domainController.dispose();
     sshUsernameController.dispose();
     sshPasswordController.dispose();
+    socksUsernameController.dispose();
+    socksPasswordController.dispose();
     super.dispose();
   }
 
@@ -957,6 +964,44 @@ class _ConfigDialogState extends State<_ConfigDialog> {
                 ),
               ],
             ),
+            // Upstream SOCKS5 authentication
+            if (selectedTunnelType == TunnelType.socks5) ...[
+              const SizedBox(height: 16),
+              const Text(
+                'SOCKS5 Authentication (optional)',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Fill in only if the SOCKS5 proxy on the server requires a username and password.',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: socksUsernameController,
+                decoration: const InputDecoration(
+                  labelText: 'SOCKS5 Username',
+                  border: OutlineInputBorder(),
+                ),
+                autocorrect: false,
+                enableSuggestions: false,
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: socksPasswordController,
+                decoration: InputDecoration(
+                  labelText: 'SOCKS5 Password',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: Icon(showSocksPassword ? Icons.visibility_off : Icons.visibility),
+                    onPressed: () => setState(() => showSocksPassword = !showSocksPassword),
+                  ),
+                ),
+                obscureText: !showSocksPassword,
+                autocorrect: false,
+                enableSuggestions: false,
+              ),
+            ],
             // SSH settings
             if (selectedTunnelType == TunnelType.ssh) ...[
               const SizedBox(height: 16),
@@ -1082,6 +1127,25 @@ class _ConfigDialogState extends State<_ConfigDialog> {
       }
     }
 
+    // Validate upstream SOCKS5 credentials (RFC 1929 limits both to 255 bytes)
+    final socksUsername = socksUsernameController.text.trim();
+    final socksPassword = socksPasswordController.text;
+    final useSocksAuth = selectedTunnelType == TunnelType.socks5 && socksUsername.isNotEmpty;
+    if (selectedTunnelType == TunnelType.socks5) {
+      if (socksUsername.isEmpty && socksPassword.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter SOCKS5 username')),
+        );
+        return;
+      }
+      if (utf8.encode(socksUsername).length > 255 || utf8.encode(socksPassword).length > 255) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('SOCKS5 username and password must be at most 255 bytes')),
+        );
+        return;
+      }
+    }
+
     final state = context.read<AppState>();
 
     if (widget.existingConfig == null) {
@@ -1097,6 +1161,8 @@ class _ConfigDialogState extends State<_ConfigDialog> {
         sshPassword: selectedTunnelType == TunnelType.ssh
             ? sshPasswordController.text
             : null,
+        socksUsername: useSocksAuth ? socksUsername : null,
+        socksPassword: useSocksAuth ? socksPassword : null,
         congestionControl: selectedTransportType == TransportType.slipstream
             ? selectedCongestionControl
             : null,
@@ -1119,6 +1185,8 @@ class _ConfigDialogState extends State<_ConfigDialog> {
       widget.existingConfig!.sshPassword = selectedTunnelType == TunnelType.ssh
           ? sshPasswordController.text
           : null;
+      widget.existingConfig!.socksUsername = useSocksAuth ? socksUsername : null;
+      widget.existingConfig!.socksPassword = useSocksAuth ? socksPassword : null;
       widget.existingConfig!.congestionControl = selectedTransportType == TransportType.slipstream
           ? selectedCongestionControl
           : null;

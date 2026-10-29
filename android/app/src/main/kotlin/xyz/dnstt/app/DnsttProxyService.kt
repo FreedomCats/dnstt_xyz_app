@@ -33,6 +33,8 @@ class DnsttProxyService : Service() {
         const val EXTRA_PUBLIC_KEY = "public_key"
         const val EXTRA_PROXY_PORT = "proxy_port"
         const val EXTRA_SHARE_PROXY = "share_proxy"
+        const val EXTRA_SOCKS_USERNAME = "socks_username"
+        const val EXTRA_SOCKS_PASSWORD = "socks_password"
 
         var isRunning = AtomicBoolean(false)
         var stateCallback: ((String) -> Unit)? = null
@@ -43,11 +45,14 @@ class DnsttProxyService : Service() {
     private var publicKey: String = ""
     private var proxyPort: Int = 7000
     private var shareProxy: Boolean = false
+    private var socksUsername: String? = null
+    private var socksPassword: String? = null
 
     // Host for proxy connection verification - always localhost
     private val proxyHost = "127.0.0.1"
 
     private var dnsttClient: mobile.DnsttClient? = null
+    private var socksRelay: Socks5AuthRelay? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val isConnecting = AtomicBoolean(false)
     private var connectThread: Thread? = null
@@ -62,6 +67,8 @@ class DnsttProxyService : Service() {
                 publicKey = intent.getStringExtra(EXTRA_PUBLIC_KEY) ?: ""
                 proxyPort = intent.getIntExtra(EXTRA_PROXY_PORT, 7000)
                 shareProxy = intent.getBooleanExtra(EXTRA_SHARE_PROXY, false)
+                socksUsername = intent.getStringExtra(EXTRA_SOCKS_USERNAME)
+                socksPassword = intent.getStringExtra(EXTRA_SOCKS_PASSWORD)
                 // Prevent multiple connect threads from racing
                 if (isConnecting.compareAndSet(false, true)) {
                     connectThread = Thread { connect() }
@@ -171,12 +178,17 @@ class DnsttProxyService : Service() {
             Log.d(TAG, "Starting DNSTT client")
             Log.d(TAG, "DNS: $dnsServer, Domain: $tunnelDomain")
 
-            val listenAddr = if (shareProxy) "0.0.0.0:$proxyPort" else "127.0.0.1:$proxyPort"
+            val bindHost = if (shareProxy) "0.0.0.0" else "127.0.0.1"
+            val useSocksAuth = !socksUsername.isNullOrEmpty()
+            // With upstream SOCKS5 credentials, the auth relay takes the public address
+            // and the tunnel client listens on a free localhost port behind it
+            val tunnelPort = if (useSocksAuth) Socks5AuthRelay.findFreePort() else proxyPort
+            val listenAddr = if (useSocksAuth) "127.0.0.1:$tunnelPort" else "$bindHost:$proxyPort"
             Log.d(TAG, "Listen address: $listenAddr")
 
             dnsttClient = Mobile.newClient(dnsServer, tunnelDomain, publicKey, listenAddr)
 
-            if (shareProxy) {
+            if (shareProxy && !useSocksAuth) {
                 dnsttClient?.setShareProxy(true)
             }
 
@@ -190,6 +202,19 @@ class DnsttProxyService : Service() {
             val running = dnsttClient?.isRunning ?: false
             Log.d(TAG, "DNSTT client running: $running")
 
+            if (running && useSocksAuth) {
+                val relay = Socks5AuthRelay(
+                    bindHost, proxyPort, "127.0.0.1", tunnelPort,
+                    socksUsername!!, socksPassword ?: ""
+                )
+                if (!relay.start()) {
+                    Log.e(TAG, "Failed to start SOCKS5 auth relay on $bindHost:$proxyPort")
+                    stopDnsttClient()
+                    return false
+                }
+                socksRelay = relay
+            }
+
             return running
 
         } catch (e: Exception) {
@@ -199,6 +224,8 @@ class DnsttProxyService : Service() {
     }
 
     private fun stopDnsttClient() {
+        socksRelay?.stop()
+        socksRelay = null
         dnsttClient?.let { client ->
             try {
                 client.stop()

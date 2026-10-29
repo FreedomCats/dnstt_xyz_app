@@ -40,6 +40,13 @@ class DnsttConfig {
   String? sshPassword;
   String? sshPrivateKey;
 
+  /// Upstream SOCKS5 credentials (only used when tunnelType is socks5).
+  /// Set when the SOCKS5 proxy behind the tunnel server requires
+  /// username/password authentication (RFC 1929). The app authenticates
+  /// on behalf of local clients, so they keep using the local proxy without auth.
+  String? socksUsername;
+  String? socksPassword;
+
   /// Slipstream-specific settings (only used when transportType is slipstream)
   /// Congestion control algorithm: "bbr" or "dcubic" (default: "dcubic")
   String? congestionControl;
@@ -58,6 +65,8 @@ class DnsttConfig {
     this.sshUsername,
     this.sshPassword,
     this.sshPrivateKey,
+    this.socksUsername,
+    this.socksPassword,
     this.congestionControl,
     this.keepAliveInterval,
     this.gsoEnabled,
@@ -73,6 +82,8 @@ class DnsttConfig {
         'sshUsername': sshUsername,
         'sshPassword': sshPassword,
         'sshPrivateKey': sshPrivateKey,
+        'socksUsername': socksUsername,
+        'socksPassword': socksPassword,
         'congestionControl': congestionControl,
         'keepAliveInterval': keepAliveInterval,
         'gsoEnabled': gsoEnabled,
@@ -88,6 +99,8 @@ class DnsttConfig {
         sshUsername: json['sshUsername'],
         sshPassword: json['sshPassword'],
         sshPrivateKey: json['sshPrivateKey'],
+        socksUsername: json['socksUsername'],
+        socksPassword: json['socksPassword'],
         congestionControl: json['congestionControl'],
         keepAliveInterval: json['keepAliveInterval'],
         gsoEnabled: json['gsoEnabled'],
@@ -120,6 +133,18 @@ class DnsttConfig {
     }
     return TunnelType.socks5;
   }
+
+  /// Whether the app must authenticate to the upstream SOCKS5 proxy
+  bool get hasSocksAuth =>
+      tunnelType == TunnelType.socks5 &&
+      socksUsername != null &&
+      socksUsername!.isNotEmpty;
+
+  /// Upstream SOCKS5 username, or null when no auth is configured
+  String? get upstreamSocksUsername => hasSocksAuth ? socksUsername : null;
+
+  /// Upstream SOCKS5 password, or null when no auth is configured
+  String? get upstreamSocksPassword => hasSocksAuth ? (socksPassword ?? '') : null;
 
   /// Whether this config uses the Slipstream transport
   bool get isSlipstream => transportType == TransportType.slipstream;
@@ -154,6 +179,8 @@ class DnsttConfig {
     String? sshUsername,
     String? sshPassword,
     String? sshPrivateKey,
+    String? socksUsername,
+    String? socksPassword,
     String? congestionControl,
     int? keepAliveInterval,
     bool? gsoEnabled,
@@ -168,6 +195,8 @@ class DnsttConfig {
       sshUsername: sshUsername ?? this.sshUsername,
       sshPassword: sshPassword ?? this.sshPassword,
       sshPrivateKey: sshPrivateKey ?? this.sshPrivateKey,
+      socksUsername: socksUsername ?? this.socksUsername,
+      socksPassword: socksPassword ?? this.socksPassword,
       congestionControl: congestionControl ?? this.congestionControl,
       keepAliveInterval: keepAliveInterval ?? this.keepAliveInterval,
       gsoEnabled: gsoEnabled ?? this.gsoEnabled,

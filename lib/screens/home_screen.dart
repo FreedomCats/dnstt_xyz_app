@@ -885,6 +885,8 @@ class _HomeScreenState extends State<HomeScreen> {
         congestionControl: config.congestionControl ?? 'dcubic',
         keepAliveInterval: config.keepAliveInterval ?? 400,
         gso: config.gsoEnabled ?? false,
+        socksUsername: config.upstreamSocksUsername,
+        socksPassword: config.upstreamSocksPassword,
       );
     } else if (isSlipstream && !useProxyMode) {
       // Slipstream in VPN mode (Android)
@@ -895,6 +897,8 @@ class _HomeScreenState extends State<HomeScreen> {
         congestionControl: config.congestionControl ?? 'dcubic',
         keepAliveInterval: config.keepAliveInterval ?? 400,
         gso: config.gsoEnabled ?? false,
+        socksUsername: config.upstreamSocksUsername,
+        socksPassword: config.upstreamSocksPassword,
       );
     } else if (useProxyMode) {
       // Proxy-only mode (desktop or Android proxy mode)
@@ -903,6 +907,8 @@ class _HomeScreenState extends State<HomeScreen> {
         tunnelDomain: state.activeConfig?.tunnelDomain,
         publicKey: state.activeConfig?.publicKey,
         proxyPort: state.proxyPort,
+        socksUsername: state.activeConfig?.upstreamSocksUsername,
+        socksPassword: state.activeConfig?.upstreamSocksPassword,
       );
     } else {
       // VPN mode (Android)
@@ -912,6 +918,8 @@ class _HomeScreenState extends State<HomeScreen> {
         dnsServer: state.activeDns?.address ?? '8.8.8.8',
         tunnelDomain: state.activeConfig?.tunnelDomain,
         publicKey: state.activeConfig?.publicKey,
+        socksUsername: state.activeConfig?.upstreamSocksUsername,
+        socksPassword: state.activeConfig?.upstreamSocksPassword,
       );
     }
 

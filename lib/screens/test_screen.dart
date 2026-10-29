@@ -342,6 +342,8 @@ class _TestScreenState extends State<TestScreen> {
             dnsServer: server.address,
             tunnelDomain: state.activeConfig?.tunnelDomain,
             publicKey: state.activeConfig?.publicKey,
+            socksUsername: state.activeConfig?.upstreamSocksUsername,
+            socksPassword: state.activeConfig?.upstreamSocksPassword,
           ).timeout(const Duration(seconds: 10));
         } catch (e) {
           developer.log('VPN connection timeout/error for ${server.address}: $e');

@@ -20,6 +20,9 @@ class DnsttFfiService {
   late final Pointer<Utf8> Function() _getLastError;
   late final void Function(Pointer<Utf8>) _freeString;
   late final int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int) _testDnsServer;
+  // Optional: missing in libraries built before upstream SOCKS5 auth support
+  int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int, Pointer<Utf8>, Pointer<Utf8>)?
+      _testDnsServerAuth;
 
   DnsttFfiService._();
 
@@ -149,6 +152,12 @@ class DnsttFfiService {
           Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Int32),
           int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int)
       >('dnstt_test_dns_server');
+      if (_lib!.providesSymbol('dnstt_test_dns_server_auth')) {
+        _testDnsServerAuth = _lib!.lookupFunction<
+            Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Int32, Pointer<Utf8>, Pointer<Utf8>),
+            int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int, Pointer<Utf8>, Pointer<Utf8>)
+        >('dnstt_test_dns_server_auth');
+      }
 
       _loaded = true;
       _loading = false;
@@ -231,9 +240,23 @@ class DnsttFfiService {
     required String publicKey,
     String testUrl = 'https://api.ipify.org?format=json',
     int timeoutMs = 15000,
+    String? socksUsername,
+    String? socksPassword,
   }) {
     if (!_loaded) {
       return -1;
+    }
+
+    if (socksUsername != null && socksUsername.isNotEmpty) {
+      return _testDnsServerWithAuth(
+        dnsServer: dnsServer,
+        tunnelDomain: tunnelDomain,
+        publicKey: publicKey,
+        testUrl: testUrl,
+        timeoutMs: timeoutMs,
+        socksUsername: socksUsername,
+        socksPassword: socksPassword ?? '',
+      );
     }
 
     final dnsServerPtr = dnsServer.toNativeUtf8();
@@ -255,6 +278,48 @@ class DnsttFfiService {
       calloc.free(tunnelDomainPtr);
       calloc.free(publicKeyPtr);
       calloc.free(testUrlPtr);
+    }
+  }
+
+  int _testDnsServerWithAuth({
+    required String dnsServer,
+    required String tunnelDomain,
+    required String publicKey,
+    required String testUrl,
+    required int timeoutMs,
+    required String socksUsername,
+    required String socksPassword,
+  }) {
+    final testDnsServerAuth = _testDnsServerAuth;
+    if (testDnsServerAuth == null) {
+      print('dnstt library does not support SOCKS5 auth tests, rebuild libdnstt');
+      return -1;
+    }
+
+    final dnsServerPtr = dnsServer.toNativeUtf8();
+    final tunnelDomainPtr = tunnelDomain.toNativeUtf8();
+    final publicKeyPtr = publicKey.toNativeUtf8();
+    final testUrlPtr = testUrl.toNativeUtf8();
+    final socksUsernamePtr = socksUsername.toNativeUtf8();
+    final socksPasswordPtr = socksPassword.toNativeUtf8();
+
+    try {
+      return testDnsServerAuth(
+        dnsServerPtr,
+        tunnelDomainPtr,
+        publicKeyPtr,
+        testUrlPtr,
+        timeoutMs,
+        socksUsernamePtr,
+        socksPasswordPtr,
+      );
+    } finally {
+      calloc.free(dnsServerPtr);
+      calloc.free(tunnelDomainPtr);
+      calloc.free(publicKeyPtr);
+      calloc.free(testUrlPtr);
+      calloc.free(socksUsernamePtr);
+      calloc.free(socksPasswordPtr);
     }
   }
 }

@@ -34,6 +34,8 @@ class SlipstreamProxyService : Service() {
         const val EXTRA_KEEP_ALIVE_INTERVAL = "keep_alive_interval"
         const val EXTRA_GSO = "gso"
         const val EXTRA_SHARE_PROXY = "share_proxy"
+        const val EXTRA_SOCKS_USERNAME = "socks_username"
+        const val EXTRA_SOCKS_PASSWORD = "socks_password"
 
         var isRunning = AtomicBoolean(false)
         var stateCallback: ((String) -> Unit)? = null
@@ -46,11 +48,14 @@ class SlipstreamProxyService : Service() {
     private var keepAliveInterval: Int = 400
     private var gso: Boolean = false
     private var shareProxy: Boolean = false
+    private var socksUsername: String? = null
+    private var socksPassword: String? = null
 
     // Host for proxy connection verification - always localhost
     private val proxyHost = "127.0.0.1"
 
     private var slipstreamBridge: SlipstreamBridge? = null
+    private var socksRelay: Socks5AuthRelay? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val isConnecting = AtomicBoolean(false)
     private var connectThread: Thread? = null
@@ -67,6 +72,8 @@ class SlipstreamProxyService : Service() {
                 keepAliveInterval = intent.getIntExtra(EXTRA_KEEP_ALIVE_INTERVAL, 400)
                 gso = intent.getBooleanExtra(EXTRA_GSO, false)
                 shareProxy = intent.getBooleanExtra(EXTRA_SHARE_PROXY, false)
+                socksUsername = intent.getStringExtra(EXTRA_SOCKS_USERNAME)
+                socksPassword = intent.getStringExtra(EXTRA_SOCKS_PASSWORD)
                 if (isConnecting.compareAndSet(false, true)) {
                     connectThread = Thread { connect() }
                     connectThread?.start()
@@ -113,17 +120,36 @@ class SlipstreamProxyService : Service() {
             }
 
             slipstreamBridge = SlipstreamBridge()
-            val host = if (shareProxy) "0.0.0.0" else "127.0.0.1"
+            val bindHost = if (shareProxy) "0.0.0.0" else "127.0.0.1"
+            val useSocksAuth = !socksUsername.isNullOrEmpty()
+            // With upstream SOCKS5 credentials, the auth relay takes the public address
+            // and slipstream listens on a free localhost port behind it
+            val tunnelPort = if (useSocksAuth) Socks5AuthRelay.findFreePort() else proxyPort
+            val host = if (useSocksAuth) "127.0.0.1" else bindHost
 
-            val started = slipstreamBridge!!.startClient(
+            var started = slipstreamBridge!!.startClient(
                 domain = tunnelDomain,
                 dnsServer = dnsServer,
                 congestionControl = congestionControl,
                 keepAliveInterval = keepAliveInterval,
-                port = proxyPort,
+                port = tunnelPort,
                 host = host,
                 gso = gso
             )
+
+            if (started && useSocksAuth) {
+                val relay = Socks5AuthRelay(
+                    bindHost, proxyPort, "127.0.0.1", tunnelPort,
+                    socksUsername!!, socksPassword ?: ""
+                )
+                if (relay.start()) {
+                    socksRelay = relay
+                } else {
+                    Log.e(TAG, "Failed to start SOCKS5 auth relay on $bindHost:$proxyPort")
+                    slipstreamBridge?.stopClient()
+                    started = false
+                }
+            }
 
             if (!started) {
                 val error = slipstreamBridge?.lastError ?: "Unknown error"
@@ -149,6 +175,8 @@ class SlipstreamProxyService : Service() {
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                     stateCallback?.invoke("proxy_error")
                 }
+                socksRelay?.stop()
+                socksRelay = null
                 slipstreamBridge?.stopClient()
                 slipstreamBridge = null
                 releaseWakeLock()
@@ -267,6 +295,8 @@ class SlipstreamProxyService : Service() {
 
         stateCallback?.invoke("proxy_disconnecting")
 
+        socksRelay?.stop()
+        socksRelay = null
         slipstreamBridge?.stopClient()
         slipstreamBridge = null
         releaseWakeLock()

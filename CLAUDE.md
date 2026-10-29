@@ -370,6 +370,19 @@ Android foreground service for Slipstream proxy mode (non-VPN):
 - Runs as a foreground service with notification
 - Uses `SlipstreamBridge` to manage the subprocess
 
+### Socks5AuthRelay.kt / socks5_auth_relay.dart
+
+Local SOCKS5 relay used when the SOCKS5 proxy behind the tunnel server requires
+username/password authentication (RFC 1929):
+- The tunnel client (dnstt or slipstream) listens on a free localhost port; the relay takes the
+  user-facing address (`127.0.0.1:<port>`, or `0.0.0.0:<port>` with proxy sharing)
+- Local clients (VPN TCP stack, tunnel verification, DNS tests, other apps) connect without auth;
+  the relay authenticates upstream and passes the rest of the stream through unchanged
+- The upstream greeting and credentials are sent together and the client's request is forwarded
+  without waiting for the auth reply, so auth adds no round trip through the DNS tunnel
+- Kotlin version for Android (VPN, proxy services, DNS tests), Dart version for desktop
+- Desktop DNSTT DNS tests authenticate in Go (`dnstt_test_dns_server_auth` in `go_src/desktop`)
+
 ### TcpConnection.kt
 
 TCP state machine that:
@@ -615,6 +628,7 @@ The app supports two transport types:
 - **Transport**: DNSTT
 - **Tunnel Domain**: e.g., `tunnel.example.com`
 - **Public Key**: Noise public key in hex format (required)
+- **SOCKS5 Username / Password**: optional, for a server whose upstream SOCKS5 proxy requires auth
 
 ### Slipstream Config
 - **Name**: Display name
@@ -623,6 +637,7 @@ The app supports two transport types:
 - **Congestion Control**: `dcubic` (default) or `bbr`
 - **Keep Alive Interval**: milliseconds (default 400)
 - **GSO**: Generic Segmentation Offload toggle (default off)
+- **SOCKS5 Username / Password**: optional, for a server whose upstream SOCKS5 proxy requires auth
 - No public key needed (QUIC/TLS handles encryption)
 
 DNS servers from the DNS server list are used for both protocols. For DNSTT, the DNS server carries the tunnel traffic. For Slipstream, the DNS server is used as the `--resolver` argument.

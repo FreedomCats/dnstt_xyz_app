@@ -169,6 +169,7 @@ You need a running tunnel server before using this app.
 The app requires:
 - **DNSTT Config**: Tunnel domain and public key from your dnstt server
 - **Slipstream Config**: Tunnel domain only (no public key needed, uses QUIC/TLS)
+- **SOCKS5 credentials** (optional): username and password, if the SOCKS5 proxy behind the tunnel server requires authentication. The app authenticates on behalf of local clients, so apps keep using the local proxy without a password
 - **DNS Server**: A DNS resolver that can reach your tunnel server
 
 ## Support

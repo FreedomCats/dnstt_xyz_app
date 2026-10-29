@@ -192,6 +192,8 @@ class SlipstreamService {
     String congestionControl = 'dcubic',
     int keepAliveInterval = 400,
     bool gso = false,
+    String? socksUsername,
+    String? socksPassword,
   }) async {
     final binaryPath = _findBinaryPath();
     if (binaryPath == null) {
@@ -247,7 +249,12 @@ class SlipstreamService {
       client.connectionTimeout = Duration(milliseconds: timeoutMs);
       try {
         SocksTCPClient.assignToHttpClientWithSecureOptions(client, [
-          ProxySettings(InternetAddress('127.0.0.1'), listenPort),
+          ProxySettings(
+            InternetAddress('127.0.0.1'),
+            listenPort,
+            username: socksUsername != null && socksUsername.isNotEmpty ? socksUsername : null,
+            password: socksUsername != null && socksUsername.isNotEmpty ? (socksPassword ?? '') : null,
+          ),
         ]);
         final request = await client.getUrl(Uri.parse(testUrl))
             .timeout(Duration(milliseconds: timeoutMs));
