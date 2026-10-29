@@ -193,6 +193,11 @@ Solution:
   refuses DoH/DoT servers with a clear message until stage 4.
 - Tests: resolver spec table, JSON compatibility and imports (Dart), relay
   tests (Dart, Kotlin); debug APK builds.
+- `ci.yml` is green on the stage 3 commit. Two docs-only commits failed
+  `TestProbe` before ("silent resolver: i/o timeout"): the socket read
+  deadline set from the context could fire just before the context reported
+  it, so `Probe` returned a plain timeout instead of `DeadlineExceeded`
+  (about 1 in 15 runs). Fixed in `client/probe.go`; 30 runs in a row pass.
 - Not yet checked live (the user has no test server available for now): DNSTT
   over DoH and DoT in VPN and proxy modes, VPN-mode device DNS through the
   bridge, desktop.

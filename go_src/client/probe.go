@@ -2,7 +2,9 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -92,6 +94,12 @@ func Probe(ctx context.Context, r Resolver, opts Options, domain dns.Name) (time
 		if res.err != nil {
 			if ctx.Err() != nil {
 				return 0, fmt.Errorf("no answer from resolver: %w", ctx.Err())
+			}
+			// The read deadline comes from ctx and may pass a moment
+			// before ctx reports it.
+			var netErr net.Error
+			if errors.As(res.err, &netErr) && netErr.Timeout() {
+				return 0, fmt.Errorf("no answer from resolver: %w", context.DeadlineExceeded)
 			}
 			return 0, res.err
 		}

@@ -172,7 +172,8 @@ New `lib/models/resolver_spec.dart`, a port of `client.ParseResolver`:
 
 ## Result
 
-- Done as planned, with no Go changes. `ResolverSpec` accepts a subset of
+- Done as planned. The only Go change is a fix for a flaky probe timeout
+  found in CI (`client/probe.go`). `ResolverSpec` accepts a subset of
   what the Go parser accepts (it rejects a few exotic forms Go takes, such as
   `[192.0.2.1]` or a DoH path with spaces); every short form it stores was
   checked against `client.ParseResolver`.
