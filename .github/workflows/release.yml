@@ -17,12 +17,12 @@ jobs:
     outputs:
       cert-sha256: ${{ steps.cert.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -79,7 +79,7 @@ jobs:
           echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
 
       - name: Upload Android artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: android-apks
           path: |
@@ -90,7 +90,7 @@ jobs:
   build-macos-arm64:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -101,7 +101,7 @@ jobs:
           channel: 'stable'
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go_src/go.mod
           cache-dependency-path: go_src/go.sum
@@ -156,7 +156,7 @@ jobs:
             DNSTT-Client-macOS-arm64.dmg
 
       - name: Upload macOS ARM64 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-arm64-dmg
           path: DNSTT-Client-macOS-arm64.dmg
@@ -164,7 +164,7 @@ jobs:
   build-macos-intel:
     runs-on: macos-15-intel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -175,7 +175,7 @@ jobs:
           channel: 'stable'
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go_src/go.mod
           cache-dependency-path: go_src/go.sum
@@ -230,7 +230,7 @@ jobs:
             DNSTT-Client-macOS-intel.dmg
 
       - name: Upload macOS Intel artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-intel-dmg
           path: DNSTT-Client-macOS-intel.dmg
@@ -239,7 +239,7 @@ jobs:
     if: false  # Temporarily disabled - slipstream build issues on Windows
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -250,7 +250,7 @@ jobs:
           channel: 'stable'
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go_src/go.mod
           cache-dependency-path: go_src/go.sum
@@ -319,7 +319,7 @@ jobs:
 
       - name: Upload picoquic build log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: picoquic-build-log
           path: D:\picoquic-build.log
@@ -354,7 +354,7 @@ jobs:
           Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath DNSTT-Client-Windows.zip
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-zip
           path: DNSTT-Client-Windows.zip
@@ -363,7 +363,7 @@ jobs:
     if: false  # Temporarily disabled - slipstream build issues
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -379,7 +379,7 @@ jobs:
           channel: 'stable'
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go_src/go.mod
           cache-dependency-path: go_src/go.sum
@@ -419,7 +419,7 @@ jobs:
           tar -czvf ../../../../../DNSTT-Client-Linux.tar.gz .
 
       - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-tarball
           path: DNSTT-Client-Linux.tar.gz
@@ -431,7 +431,7 @@ jobs:
       contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
 
@@ -460,7 +460,7 @@ jobs:
           # cp artifacts/linux-tarball/DNSTT-Client-Linux.tar.gz "release/DNSTT-Client-${VERSION}-alpha-Linux.tar.gz"
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.version || github.ref_name }}
           target_commitish: ${{ github.sha }}
