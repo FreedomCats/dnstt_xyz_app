@@ -288,9 +288,22 @@ The next session starts stage 4 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md`
   leaves an NDK directory without `source.properties`.
 - `flutter pub get` rewrites `linux/flutter/generated_plugins.cmake` and
   `windows/flutter/generated_plugins.cmake`; revert them before committing.
+  `flutter analyze` and `flutter test` run `pub get` too. Revert them before
+  `git stash pop` as well, or the pop fails.
+- To see whether a change adds analyzer issues, compare the sorted
+  `flutter analyze` output (line numbers stripped) with that of the stashed
+  tree; the baseline has about 110 infos and one error in the stale
+  `test/widget_test.dart`.
+- Unused code, not imported anywhere: `lib/screens/connection_screen.dart`,
+  `lib/screens/test_screen.dart`, `lib/data/dns_server_lists.dart`. Keep new
+  parameters optional so they compile.
   Gradle unit tests leave `android/build/`; delete it.
 - `android/gradlew` and the wrapper jar are not in git (`android/.gitignore`);
   `flutter build apk --config-only` generates them in a few seconds.
+- The container may be reused between sessions: check for Flutter in
+  `/root/flutter`, the Android SDK in `/opt/sdk/android`,
+  `android/local.properties` and `android/app/libs/dnstt.aar` (rebuild it
+  only after Go changes) before installing anything.
 - A fresh cloud container has no Flutter or Android SDK. Download the Flutter
   3.38.7 tarball from `storage.googleapis.com/flutter_infra_release` and the
   Android command-line tools from `dl.google.com`, then `sdkmanager` for
