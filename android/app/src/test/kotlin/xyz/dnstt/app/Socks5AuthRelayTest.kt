@@ -311,7 +311,7 @@ class Socks5AuthRelayTest {
 
     @Test
     fun connectionIdleLongerThanHandshakeTimeoutStaysOpen() {
-        startRelay("user", "pässword", handshakeTimeoutMs = 500)
+        startRelay("user", "pässword", handshakeTimeoutMs = 2000)
         Socket("127.0.0.1", relayPort).use { client ->
             client.soTimeout = 5000
             val input = DataInputStream(client.getInputStream())
@@ -322,7 +322,7 @@ class Socks5AuthRelayTest {
             output.write(connectRequest("example.com", 443))
             assertArrayEquals(byteArrayOf(0x05, 0x00), input.readBytes(10).copyOf(2))
 
-            Thread.sleep(1500)
+            Thread.sleep(4000)
             output.write("ping".toByteArray())
             assertEquals("ping", String(input.readBytes(4)))
         }

@@ -14,6 +14,8 @@ on:
 jobs:
   build-android:
     runs-on: ubuntu-latest
+    outputs:
+      cert-sha256: ${{ steps.cert.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,8 +39,40 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      # test/widget_test.dart is stale (see docs/STATUS.md), so only the relay tests run for now
+      - name: Dart tests
+        run: flutter test test/socks5_auth_relay_test.dart
+
+      - name: Kotlin unit tests
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest
+
+      # Releases must be signed with the project key, or they cannot update an installed release
+      - name: Set up release signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::Release signing key is missing: set the ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD secrets"
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
       - name: Build APKs (split by ABI)
-        run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info=/tmp/debug-info
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info="$RUNNER_TEMP/debug-info"
+
+      - name: Get signing certificate
+        id: cert
+        run: |
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          SHA256=$("$APKSIGNER" verify --print-certs build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)
+          echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
 
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
@@ -65,7 +99,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: go_src/go.mod
+          cache-dependency-path: go_src/go.sum
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -138,7 +173,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: go_src/go.mod
+          cache-dependency-path: go_src/go.sum
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -212,7 +248,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: go_src/go.mod
+          cache-dependency-path: go_src/go.sum
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -340,7 +377,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version-file: go_src/go.mod
+          cache-dependency-path: go_src/go.sum
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -421,6 +459,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.version || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           name: DNSTT Client ${{ github.event.inputs.version || github.ref_name }}
           body: |
             ## DNSTT Client Release
@@ -441,6 +480,12 @@ jobs:
             ### Protocols
             - **DNSTT** - DNS-encoded tunnel (KCP + Noise encryption)
             - **Slipstream** - QUIC-over-DNS tunnel (faster, TLS 1.3)
+
+            ### Verify the Android APK
+            APK signing certificate SHA-256: `${{ needs.build-android.outputs.cert-sha256 }}`
+
+            Check it with `apksigner verify --print-certs <file>.apk`. An update signed with
+            another certificate is not from this project.
 
             ### Notes
             - **Android**: Tunnels all device traffic through DNS (VPN mode) or local proxy

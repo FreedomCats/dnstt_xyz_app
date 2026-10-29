@@ -15,7 +15,8 @@ environment details, servers, credentials or other personal data.
   4. Translation of `AGENTS.md` and `docs/CODE_REVIEW.md` into English.
   5. Upstream SOCKS5 username/password auth (see below).
   6. Fixes to the SOCKS5 auth relay after review (see below).
-- No pull requests are open yet.
+  7. CI builds and release signing (see below).
+- No pull requests are open yet. GitHub Actions in the fork have not run yet.
 
 ## Done: upstream SOCKS5 auth (upstream issue #15)
 
@@ -64,8 +65,41 @@ Solution:
   in the relay, like the rest of `lib/services/`.
 - Not yet verified against a real server and device.
 
+## Done: CI builds and release signing
+
+- `.github/workflows/ci.yml`: on every push and pull request runs the relay
+  Dart tests, the Kotlin unit tests and `go test ./...`, then builds release
+  APKs (split by ABI) and uploads them as the `android-apks` artifact for 14
+  days. The job summary shows the signing certificate.
+- `.github/workflows/release.yml` (from upstream, tags `v*`): the Android job
+  now runs the same tests, requires the release key (fails without it), and the
+  release notes show the SHA-256 of the signing certificate. The release tag
+  points at the built commit (`target_commitish`); Go comes from
+  `go_src/go.mod`. macOS builds are unchanged; Windows and Linux stay disabled
+  as upstream left them.
+- `android/app/build.gradle.kts`: release signing from `android/key.properties`
+  or the `ANDROID_KEYSTORE_FILE` / `ANDROID_KEYSTORE_PASSWORD` /
+  `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` environment variables, debug key
+  otherwise; VCS metadata is no longer included in the APK. Key creation and
+  the secrets are described in `CLAUDE.md` ("Signing Release Builds").
+- Checked locally: a release build signed with a test key from the environment
+  variables, and the debug-key fallback. The workflows have not run on GitHub
+  yet.
+- Only `arm64-v8a` has the Slipstream binary; the `armeabi-v7a` and `x86_64`
+  APKs work with DNSTT only. `dnstt.aar` and `libslipstream_client.so` are
+  still prebuilt from upstream.
+
 ## Next steps
 
+0. **First CI build** (needs the user):
+   - enable GitHub Actions in the fork (Actions tab);
+   - create the release key and add the four secrets (`CLAUDE.md`, "Signing
+     Release Builds"); keep a backup of the key;
+   - push to the work branch, download `android-apks` from the CI run and
+     install the `arm64-v8a` APK on the phone;
+   - for a release: lightweight tag `v*` on the work branch (`AGENTS.md`). The
+     `workflow_dispatch` button uses the workflow from the default branch
+     `main`, which is still upstream's.
 1. **Live check of SOCKS5 auth** on a device with a real server: VPN and proxy
    modes, DNSTT and Slipstream, DNS server tests, wrong password (expect
    `Socks5AuthRelay: Upstream SOCKS5 authentication failed` in logcat).
@@ -83,10 +117,11 @@ Solution:
    2. "Share proxy" exposes an open SOCKS5 proxy to the LAN. Now more
       important: with upstream auth, the relay on `0.0.0.0` lends the upstream
       account to anyone on the network. Add local auth for shared mode.
-   3. Release signing key and rebuilding `dnstt.aar` / `libslipstream_client.so`
-      in CI; Slipstream for all Android ABIs.
-   4. Pull request CI: `flutter analyze`, `flutter test`, `go test ./...`,
-      Kotlin unit tests; fix or replace the stale `test/widget_test.dart`.
+   3. Rebuild `dnstt.aar` / `libslipstream_client.so` in CI (signing is done);
+      Slipstream for all Android ABIs.
+   4. CI: add `flutter analyze` and the full `flutter test` after fixing or
+      replacing the stale `test/widget_test.dart`; `go vet ./...` fails on
+      upstream tests in `go_src/noise`.
    5. Replace the hand-written TCP stack with a tun2socks implementation.
    6. DoH/DoT transport in the DNSTT mobile library.
 

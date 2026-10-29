@@ -327,7 +327,7 @@ void main() {
   });
 
   test('connection idle longer than the handshake timeout stays open', () async {
-    await startRelay('user', 'pässword', handshakeTimeout: const Duration(milliseconds: 500));
+    await startRelay('user', 'pässword', handshakeTimeout: const Duration(seconds: 2));
 
     final client = await Socket.connect('127.0.0.1', relayPort);
     final reader = _Reader(client);
@@ -337,7 +337,7 @@ void main() {
     client.add(connectRequest('example.com', 443));
     expect((await reader.read(10)).sublist(0, 2), [0x05, 0x00]);
 
-    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    await Future<void>.delayed(const Duration(seconds: 4));
     client.add(utf8.encode('ping'));
     expect(utf8.decode(await reader.read(4)), 'ping');
     client.destroy();

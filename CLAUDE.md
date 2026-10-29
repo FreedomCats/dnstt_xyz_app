@@ -299,50 +299,56 @@ dependencies {
 
 ## Signing Release Builds
 
+Release APKs must always be signed with the same project key: Android installs an update only
+if it is signed with the same certificate as the installed app. Without a key, the build falls
+back to the debug key (a new one on every CI runner), and such APKs cannot update an installed
+release.
+
 ### Create Keystore
 
+Use only neutral values in `-dname`: the certificate is published with every APK (see
+`AGENTS.md`). Keep the keystore and its password out of the repository and back them up; a lost
+key means users have to uninstall the app to move to a new one.
+
 ```bash
-keytool -genkey -v \
-  -keystore ~/dnstt-release-key.jks \
+keytool -genkeypair -v \
+  -keystore dnstt-release.jks \
+  -storetype PKCS12 \
+  -alias dnstt \
   -keyalg RSA \
-  -keysize 2048 \
+  -keysize 4096 \
   -validity 10000 \
-  -alias dnstt-key
+  -dname "CN=FreedomCats"
 ```
 
-### Configure Signing
+With PKCS12 the key password is the keystore password.
 
-Create `android/key.properties`:
+### Signing in CI
+
+`.github/workflows/ci.yml` (every push) and `.github/workflows/release.yml` (tags `v*`) read the
+key from repository secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|--------|-------|
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w0 dnstt-release.jks` (macOS: `base64 -i dnstt-release.jks`) |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore password |
+| `ANDROID_KEY_ALIAS` | `dnstt` |
+| `ANDROID_KEY_PASSWORD` | key password (the keystore password for PKCS12) |
+
+`ci.yml` warns and signs with the debug key when the secrets are missing; `release.yml` fails.
+The release notes show the SHA-256 of the signing certificate.
+
+### Signing Local Builds
+
+`android/app/build.gradle.kts` takes the key from `android/key.properties` (ignored by git), or
+from the environment variables `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`:
+
 ```properties
-storePassword=your_store_password
-keyPassword=your_key_password
-keyAlias=dnstt-key
-storeFile=/Users/yourname/dnstt-release-key.jks
-```
-
-Update `android/app/build.gradle`:
-```gradle
-def keystoreProperties = new Properties()
-def keystorePropertiesFile = rootProject.file('key.properties')
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-}
-
-android {
-    signingConfigs {
-        release {
-            keyAlias keystoreProperties['keyAlias']
-            keyPassword keystoreProperties['keyPassword']
-            storeFile keystoreProperties['storeFile'] ? file(keystoreProperties['storeFile']) : null
-            storePassword keystoreProperties['storePassword']
-        }
-    }
-    buildTypes {
-        release {
-            signingConfig signingConfigs.release
-        }
-    }
-}
+storePassword=<password>
+keyPassword=<password>
+keyAlias=dnstt
+storeFile=<absolute path to dnstt-release.jks>
 ```
 
 ## Key Components
