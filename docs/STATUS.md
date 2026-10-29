@@ -223,6 +223,42 @@ Solution:
    optional tunnel-DNS mode. Stages 1 (Go library in CI) and 2 (DoH/DoT in
    the Go library) are done; next is stage 3, DoH/DoT for DNSTT in the app.
 
+## Resume here: stage 3 (DoH/DoT for DNSTT in the app)
+
+The next session starts stage 3 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md`
+(section 6, "Stage 3"; design in sections 3.1, 3.5–3.7). First write its
+step-by-step plan as `docs/STAGE3_APP_DOH_DOT.md`, as for stages 1 and 2, then
+implement. Starting points found while doing stage 2:
+
+- Go API to use (already in the AAR, Java signatures from `javap`):
+  `Mobile.newClient(spec, domain, key, listenAddr)` (throws on an invalid
+  spec), `DnsttClient.setBootstrap(String)`, `setTLSFingerprint(String)`,
+  `setSocketProtector(SocketProtector)` where `SocketProtector.protect(long)`
+  returns boolean, `Mobile.resolverKind(String)`, `udpResolverAddr(String)`,
+  `startBridge(String, String, String)` returning `Bridge` (`port()` is a
+  long, `stop()`), `probeResolver(spec, bootstrap, fingerprint, domain,
+  long timeoutMs)` returning a long and throwing on failure. Desktop exports:
+  see `CLAUDE.md`, "mobile.go and the client package"; look them up lazily
+  with `providesSymbol`, as `dnstt_test_dns_server_auth` is.
+- Kotlin call sites of `Mobile.newClient` (each with `start()` in the same
+  error handling): `DnsttVpnService.kt` (VPN), `DnsttProxyService.kt`
+  (proxy), `MainActivity.kt` (two SSH paths and the DNS server test).
+- Dart: `vpn_service.dart` passes `dnsServer` through the platform channel
+  (several methods; default `'8.8.8.8'`); `dnstt_ffi_service.dart` binds the
+  desktop library; `dnstt_service.dart` `_testDnsServerViaDnsQuery` is the UDP
+  probe (IPv4 only, port 53), to be routed to `probeResolver` for DoH/DoT.
+- IPv4-only validation to replace with a Dart resolver-spec parser (same cases
+  as `go_src/client/resolver_test.go`): the add dialog regex in
+  `dns_management_screen.dart`, `_isValidIp` in
+  `config_import_export_service.dart`.
+- Slipstream hard-codes `:53` (`SlipstreamBridge.kt`, twice in
+  `slipstream_service.dart`); that is stage 4, but stage 3 must not break it
+  when a stored address is no longer a bare IPv4 (Slipstream should refuse
+  DoH/DoT specs until stage 4, or use `udpResolverAddr`).
+- The user still has to install a CI APK and check that DNSTT connects: since
+  stage 2 the Go client code is new (same behaviour over UDP, covered by the
+  end-to-end test, but not yet run on a phone). Worth asking at the start.
+
 ## Working notes
 
 - Commit rules are in `AGENTS.md`: author `FreedomCats
