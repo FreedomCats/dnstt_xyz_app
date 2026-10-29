@@ -1,123 +1,171 @@
-# Обзор кода: dnstt_xyz_app (форк FreedomCats)
+# Code review: dnstt_xyz_app (FreedomCats fork)
 
-Ревизия: `8155cde` (совпадает с HEAD апстрима `dnstt-xyz/dnstt_xyz_app`)
+Revision: `8155cde` (same as upstream `dnstt-xyz/dnstt_xyz_app` HEAD)
 
-Обзор сделан по чтению исходников. Код, сборку и тесты не запускали.
+The review is based on reading the source. The code, build and tests were not
+run.
 
-## Обзор проекта
+## Project overview
 
-Форк полностью совпадает с апстримом, собственных коммитов в нём нет. Все находки ниже относятся и к исходному проекту.
+The fork is identical to upstream and has no commits of its own. All findings
+below apply to the original project as well.
 
-Это Flutter-клиент для двух протоколов туннелирования через DNS:
+It is a Flutter client for two DNS tunneling protocols:
 
-- **DNSTT** (KCP + Noise поверх DNS TXT). Go-библиотека: на Android подключается через gomobile (`go_src/mobile/mobile.go`), на десктопе через FFI (`go_src/desktop/desktop.go`).
-- **Slipstream** (QUIC поверх DNS). Rust-бинарник `slipstream-client` запускается отдельным процессом, исходники лежат в сабмодуле `vendor/slipstream-rust`.
+- **DNSTT** (KCP + Noise over DNS TXT). A Go library: on Android it is used via
+  gomobile (`go_src/mobile/mobile.go`), on desktop via FFI
+  (`go_src/desktop/desktop.go`).
+- **Slipstream** (QUIC over DNS). The Rust `slipstream-client` binary runs as a
+  subprocess; its source is in the `vendor/slipstream-rust` submodule.
 
-Режимы работы:
+Modes:
 
-- **Android:** VPN на всё устройство (трафик из TUN вручную разбирается в TCP и отправляется в SOCKS5) или просто локальный SOCKS5-прокси.
-- **Десктоп:** только SOCKS5 на `127.0.0.1:7000`.
-- **SSH поверх DNSTT** (`SshTunnelClient.kt`, библиотека JSch). Этот режим не описан в CLAUDE.md.
+- **Android:** device-wide VPN (TUN traffic is parsed into TCP by hand and sent
+  to SOCKS5) or a plain local SOCKS5 proxy.
+- **Desktop:** SOCKS5 on `127.0.0.1:7000` only.
+- **SSH over DNSTT** (`SshTunnelClient.kt`, JSch library). This mode is not
+  described in CLAUDE.md.
 
-Объём около 20 тыс. строк. Самые крупные файлы: `lib/screens/dns_management_screen.dart` (1539), `lib/services/vpn_service.dart` (1429), `MainActivity.kt` (1230), `DnsttVpnService.kt` (1190).
+About 20k lines. Largest files: `lib/screens/dns_management_screen.dart`
+(1539), `lib/services/vpn_service.dart` (1429), `MainActivity.kt` (1230),
+`DnsttVpnService.kt` (1190).
 
-## Серьёзные проблемы (приватность и безопасность)
+## Serious issues (privacy and security)
 
-### 1. Утечка IPv6 в VPN-режиме
+### 1. IPv6 leak in VPN mode
 
-В `DnsttVpnService.kt` (около строк 418–423) задаются только `addAddress("10.0.0.2", 32)` и `addRoute("0.0.0.0", 0)`. Маршрута для IPv6 нет, поэтому в сетях с IPv6 такой трафик идёт напрямую мимо туннеля.
+`DnsttVpnService.kt` (around lines 418–423) sets only
+`addAddress("10.0.0.2", 32)` and `addRoute("0.0.0.0", 0)`. There is no IPv6
+route, so on networks with IPv6 that traffic goes directly, bypassing the
+tunnel.
 
-**Что сделать:** добавить IPv6-адрес и маршрут `::/0`, а такие пакеты отбрасывать или обрабатывать, но не выпускать мимо VPN.
+**Fix:** add an IPv6 address and a `::/0` route, and drop or handle those
+packets instead of letting them bypass the VPN.
 
-### 2. DNS-запросы устройства идут мимо туннеля
+### 2. Device DNS queries bypass the tunnel
 
-`processUdpPacket` (`DnsttVpnService.kt:679`) отправляет каждый DNS-запрос открытым UDP через защищённый сокет (`protect(dnsSocket)`) напрямую на выбранный резолвер. Провайдер или цензор видит все домены, которые открывает пользователь.
+`processUdpPacket` (`DnsttVpnService.kt:679`) sends every DNS query as plain UDP
+through a protected socket (`protect(dnsSocket)`) directly to the selected
+resolver. The ISP or censor sees every domain the user visits.
 
-Кроме того, на каждый запрос создаётся новый `Thread {}` без ограничения числа потоков.
+In addition, a new `Thread {}` is created for every query with no limit on the
+number of threads.
 
-**Что сделать:** пустить DNS через туннель, например по TCP через SOCKS5 или через DoH внутри туннеля, и обрабатывать запросы в ограниченном пуле потоков.
+**Fix:** route DNS through the tunnel, for example over TCP via SOCKS5 or via
+DoH inside the tunnel, and handle queries in a bounded thread pool.
 
-### 3. «Поделиться прокси» открывает SOCKS5 для всей сети без пароля
+### 3. "Share proxy" exposes SOCKS5 to the whole network without a password
 
-При включённой опции прокси слушает `0.0.0.0`:
+With the option enabled, the proxy listens on `0.0.0.0`:
 
 - `DnsttProxyService.kt:174`
 - `SlipstreamProxyService.kt:116`
 - `SshTunnelClient.kt:140`
 
-Аутентификации нет, поэтому любой в той же сети (например, в общей Wi-Fi) может пользоваться туннелем.
+There is no authentication, so anyone on the same network (for example, shared
+Wi-Fi) can use the tunnel.
 
-**Что сделать:** требовать логин и пароль SOCKS5 при включённом шаринге и предупреждать об этом в интерфейсе.
+**Fix:** require a SOCKS5 username and password when sharing is enabled and
+warn about it in the UI.
 
-### 4. SSH без проверки ключа сервера
+### 4. SSH without server key verification
 
-В `SshTunnelClient.kt:95` стоит `StrictHostKeyChecking=no`. Для DNSTT это частично компенсируется тем, что Noise проверяет ключ сервера, но SSH-уровень всё равно не защищён от подмены.
+`SshTunnelClient.kt:95` sets `StrictHostKeyChecking=no`. For DNSTT this is
+partly mitigated by Noise authenticating the server, but the SSH layer is still
+not protected against impersonation.
 
-**Что сделать:** хотя бы запоминать отпечаток ключа при первом подключении и проверять его потом (TOFU).
+**Fix:** at least remember the key fingerprint on first connection and verify
+it afterwards (TOFU).
 
-### 5. Релизная сборка подписывается debug-ключом
+### 5. Release builds are signed with the debug key
 
-В `android/app/build.gradle.kts` для release указан `signingConfig = signingConfigs.getByName("debug")`. Обновления нельзя отличить от подделки: любой может выпустить APK с той же подписью.
+`android/app/build.gradle.kts` sets
+`signingConfig = signingConfigs.getByName("debug")` for release. Updates cannot
+be told apart from fakes: anyone can publish an APK with the same signature.
 
-**Что сделать:** завести собственный ключ подписи, хранить его в секретах CI и подписывать им релизы.
+**Fix:** create a dedicated signing key, keep it in CI secrets and sign releases
+with it.
 
-### 6. В репозиторий закоммичены готовые бинарники
+### 6. Prebuilt binaries are committed to the repository
 
-- `android/app/libs/dnstt.aar` (около 7 МБ)
+- `android/app/libs/dnstt.aar` (about 7 MB)
 - `android/app/src/main/jniLibs/arm64-v8a/libslipstream_client.so`
 
-CI для Android их не пересобирает, поэтому нельзя проверить, что они собраны именно из исходников в репозитории.
+The Android CI does not rebuild them, so there is no way to verify they were
+built from the sources in the repository.
 
-**Что сделать:** собирать AAR (gomobile) и `.so` (cargo-ndk) в CI.
+**Fix:** build the AAR (gomobile) and the `.so` (cargo-ndk) in CI.
 
-### 7. Импорт конфигов по открытому HTTP
+### 7. Config import over plain HTTP
 
-В манифесте стоит `usesCleartextTraffic="true"`, а `config_import_export_service.dart:22` принимает и `http://`-адреса. Конфиг (домен и публичный ключ) можно подменить по дороге.
+The manifest sets `usesCleartextTraffic="true"`, and
+`config_import_export_service.dart:22` also accepts `http://` URLs. A config
+(domain and public key) can be swapped in transit.
 
-**Что сделать:** разрешить только HTTPS и отключить открытый HTTP в манифесте.
+**Fix:** allow HTTPS only and disable cleartext traffic in the manifest.
 
-## Функциональные баги
+## Functional bugs
 
-### Упрощённая TCP-реализация (`TcpConnection.kt`)
+### Simplified TCP implementation (`TcpConnection.kt`)
 
-- Номер последовательности входящих пакетов не проверяется. Повторно отправленные и пришедшие не по порядку сегменты пересылаются в SOCKS5 как есть, что даёт дубли и перемешанные данные.
-- Окно приёма клиента игнорируется: всегда отправляется `windowSize = 65535`, подтверждений от клиента никто не ждёт.
-- RST не обрабатывается.
-- При FIN соединение сразу закрывается целиком, полузакрытые соединения не поддерживаются.
+- Incoming sequence numbers are not checked. Retransmitted and out-of-order
+  segments are forwarded to SOCKS5 as is, causing duplicated and reordered
+  data.
+- The client's receive window is ignored: `windowSize = 65535` is always sent
+  and nothing waits for acknowledgements from the client.
+- RST is not handled.
+- On FIN the connection is closed entirely; half-closed connections are not
+  supported.
 
-На слабом канале из-за этого возможны «битые» соединения.
+On a weak link this can produce broken connections.
 
-**Что сделать:** заменить самописный TCP на готовый tun2socks, например `hev-socks5-tunnel` или Go-реализацию tun2socks прямо в AAR.
+**Fix:** replace the hand-written TCP with a ready-made tun2socks, for example
+`hev-socks5-tunnel` or a Go tun2socks implementation built into the AAR.
 
-### Отбрасывается весь UDP, кроме порта 53
+### All UDP except port 53 is dropped
 
-QUIC, WebRTC, игры и звонки в VPN-режиме не работают: браузеры переключатся на TCP, остальное просто сломается. ICMP тоже отбрасывается.
+QUIC, WebRTC, games and calls do not work in VPN mode: browsers fall back to
+TCP, everything else just breaks. ICMP is dropped too.
 
-### Slipstream на Android есть только для arm64
+### Slipstream on Android exists only for arm64
 
-CI собирает APK для armeabi-v7a и x86_64, но `jniLibs` содержит только `arm64-v8a`. На этих сборках Slipstream не запустится.
+CI builds APKs for armeabi-v7a and x86_64, but `jniLibs` contains only
+`arm64-v8a`. Slipstream will not start on those builds.
 
-### В мобильной библиотеке DNSTT только обычный UDP/53
+### The DNSTT mobile library supports only plain UDP/53
 
-В оригинальном `dnstt-client` (`go_src/dnstt-client`) есть DoH и DoT с uTLS, а мобильная обёртка (`go_src/mobile/mobile.go`) работает только через обычный UDP. Такой трафик легко заметить и заблокировать.
+The original `dnstt-client` (`go_src/dnstt-client`) has DoH and DoT with uTLS,
+but the mobile wrapper (`go_src/mobile/mobile.go`) works over plain UDP only.
+That traffic is easy to detect and block.
 
-### Расхождение версий Go
+### Go version mismatch
 
-В `go.mod` указана `go 1.24.0`, а в CI (`.github/workflows/release.yml`) ставится Go 1.21. Сейчас сборка работает только благодаря автоматической подгрузке toolchain (`GOTOOLCHAIN=auto`).
+`go.mod` specifies `go 1.24.0`, while CI (`.github/workflows/release.yml`)
+installs Go 1.21. The build currently works only thanks to automatic toolchain
+download (`GOTOOLCHAIN=auto`).
 
-## Качество кода и инфраструктура
+## Code quality and infrastructure
 
-- **Тестов фактически нет.** `test/widget_test.dart` — нетронутый шаблон со счётчиком, он упадёт.
-- **CI запускается только на тегах.** Проверок на pull request нет: ни `flutter analyze`, ни `go test ./...`, хотя тесты в `go_src/dns` и `go_src/noise` есть.
-- **Дублирование:** строка `"8.8.8.8"` как значение по умолчанию повторяется больше 15 раз в `MainActivity.kt` и сервисах.
-- **Подробные логи:** пишутся адреса назначения каждого соединения и каждый DNS-запрос. Для инструмента обхода цензуры в релизе это лучше отключить.
-- **Документация:** CLAUDE.md и README ссылаются на апстрим, а не на форк, и не упоминают SSH-режим.
+- **There are effectively no tests.** `test/widget_test.dart` is the untouched
+  counter template and will fail.
+- **CI runs only on tags.** There are no pull request checks: no
+  `flutter analyze`, no `go test ./...`, even though `go_src/dns` and
+  `go_src/noise` have tests.
+- **Duplication:** the `"8.8.8.8"` default is repeated more than 15 times in
+  `MainActivity.kt` and the services.
+- **Verbose logging:** the destination of every connection and every DNS query
+  is logged. For a censorship circumvention tool this is better disabled in
+  release builds.
+- **Documentation:** CLAUDE.md and README point to upstream rather than the
+  fork and do not mention the SSH mode.
 
-## Рекомендуемый порядок работ
+## Suggested order of work
 
-1. Перекрыть IPv6 и пустить DNS через туннель (пункты 1–2).
-2. Добавить пароль к SOCKS при «поделиться прокси» и предупреждение в интерфейсе (пункт 3).
-3. Завести свой ключ подписи и пересобирать AAR и `.so` в CI (пункты 5–6), добавить сборки Slipstream для всех ABI.
-4. Добавить CI на pull request: `flutter analyze`, `go test ./...`, исправленный widget-тест.
-5. Заменить самописный TCP на готовый tun2socks.
-6. Добавить DoH/DoT-транспорт в мобильную библиотеку DNSTT.
+1. Block IPv6 leaks and route DNS through the tunnel (items 1–2).
+2. Add a SOCKS password for "share proxy" and a warning in the UI (item 3).
+3. Create a dedicated signing key and rebuild the AAR and `.so` in CI
+   (items 5–6); add Slipstream builds for all ABIs.
+4. Add pull request CI: `flutter analyze`, `go test ./...`, a fixed widget
+   test.
+5. Replace the hand-written TCP with a ready-made tun2socks.
+6. Add a DoH/DoT transport to the DNSTT mobile library.
