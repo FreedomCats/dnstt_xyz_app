@@ -114,9 +114,12 @@ Solution:
 - `scripts/build_aar.sh` builds `android/app/libs/dnstt.aar` from `go_src`:
   copy in the fixed directory `/tmp/dnstt_build` (gomobile records it in the
   build info), gomobile/gobind at the version pinned in `go.mod`, Go toolchain
-  from `go.mod`, `-trimpath -ldflags="-s -w"`, ABIs arm, arm64, amd64 (the old
-  AAR also had x86, which Flutter never packs). Two builds give a
-  byte-identical AAR. Java API is the same as the old upstream AAR.
+  from `go.mod`, `-trimpath -ldflags="-s -w -buildid="`, ABIs arm, arm64,
+  amd64 (the old AAR also had x86, which Flutter never packs). Java API is the
+  same as the old upstream AAR.
+- Reproducible: the `.so` files are byte-identical across builds and machines.
+  The first CI build differed from the local one only in the Go and GNU build
+  IDs, which hash the NDK compiler's path; `-buildid=` removes both.
 - `go_src/go.mod` pins `toolchain go1.26.10`; CI used Go 1.24.0 before (no
   longer supported). Go tests pass with it.
 - `scripts/check_binary_paths.sh` checks binaries and archives for machine

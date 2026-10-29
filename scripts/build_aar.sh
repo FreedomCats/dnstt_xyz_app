@@ -83,9 +83,11 @@ echo "Go: $(go version)"
 GOBIN="$TOOLS_DIR" go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
 export PATH="$TOOLS_DIR:$PATH"
 
-# -trimpath removes file system paths, -s -w strip symbols and debug info
+# -trimpath removes file system paths, -s -w strip symbols and debug info.
+# -buildid= drops the Go build ID (and the GNU build ID derived from it): it hashes
+# the NDK compiler's path, so the same sources gave different files on other machines.
 GOFLAGS="-trimpath" gomobile bind \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -buildid=" \
     -androidapi 21 \
     -target="$TARGETS" \
     -o "$BUILD_DIR/dnstt.aar" \

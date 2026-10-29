@@ -45,7 +45,9 @@ sources at each commit, not taken from a prebuilt file.
    - Installs `gomobile` and `gobind` at the version pinned in `go.mod`
      (`golang.org/x/mobile`) into the build directory, not into the user's
      `GOBIN`.
-   - `gomobile bind` with `-trimpath`, `-ldflags="-s -w"`, `-androidapi 21`,
+   - `gomobile bind` with `-trimpath`, `-ldflags="-s -w -buildid="` (the build
+     IDs hash the NDK compiler's path and would differ between machines),
+     `-androidapi 21`,
      targets `android/arm,android/arm64,android/amd64` (the ABIs Flutter
      builds).
    - Writes `android/app/libs/dnstt.aar` (no `-sources.jar`) and runs the path
@@ -54,7 +56,8 @@ sources at each commit, not taken from a prebuilt file.
 4. **Local verification.**
    - The new AAR exposes the same Java API as the old one (`javap` on
      `classes.jar`).
-   - The path check passes; two builds in a row give identical `.so` files.
+   - The path check passes; two builds give identical `.so` files, also with
+     the NDK at another path, and the CI build matches the local one.
    - Kotlin unit tests pass and the debug APK builds with the new AAR.
 
 5. **Gradle guard.** `android/app/build.gradle.kts` fails `preBuild` with a

@@ -165,11 +165,14 @@ The script:
   the Go build info even with `-trimpath`, so it is a fixed, neutral path;
 - installs `gomobile` and `gobind` at the version pinned in `go.mod` into a temporary directory
   (no `go install …@latest`, no `gomobile init`);
-- builds with the Go toolchain from `go.mod`, `-trimpath` and `-ldflags="-s -w"` for
+- builds with the Go toolchain from `go.mod`, `-trimpath` and `-ldflags="-s -w -buildid="` for
   `android/arm,android/arm64,android/amd64` (the ABIs Flutter builds; set `TARGETS` to change);
 - writes `android/app/libs/dnstt.aar` and checks it with `scripts/check_binary_paths.sh`.
 
-The build is reproducible: the same Go toolchain and NDK give byte-identical `.so` files.
+The build is reproducible: the same sources, Go toolchain and NDK version give byte-identical
+`.so` files on any machine, so a local build can be compared with the checksums in the CI job
+summary. Without `-buildid=` the build IDs differ between machines: they hash the path of the NDK
+compiler.
 
 `scripts/check_binary_paths.sh FILE...` checks binaries and archives (`.aar`, `.apk`) for paths
 of the build machine (`/home/`, `/Users/`, `/root/`, `C:\Users`). CI runs it on the AAR, the
