@@ -20,12 +20,15 @@ import java.util.concurrent.atomic.AtomicInteger
  * a SOCKS5 proxy. When that proxy requires username/password authentication (RFC 1929), local
  * clients (the VPN TCP stack, the tunnel verification, OkHttp tests, other apps in proxy mode)
  * connect to this relay instead. The relay accepts them without auth (or with any credentials),
- * performs the username/password sub-negotiation with the upstream proxy and then passes the
- * rest of the stream (the client's request and all data) through unchanged.
+ * reads the client's request, performs the handshake with the upstream proxy and then passes
+ * the rest of the stream through unchanged.
  *
- * The upstream greeting and credentials are sent together right after accepting a client, and
- * the client's request is forwarded without waiting for the upstream auth reply, so the extra
- * authentication step costs no additional round trip through the DNS tunnel.
+ * The upstream greeting, credentials and the client's request are sent in one write, so the
+ * extra authentication step costs no additional round trip through the DNS tunnel. Some proxies
+ * (microsocks, for example) handle each read as one message and drop the bytes that follow it.
+ * When the proxy accepts username/password auth but the pipelined handshake does not complete,
+ * the relay retries the connection step by step, and keeps doing so for later connections once
+ * that works.
  */
 class Socks5AuthRelay(
     private val bindHost: String,
@@ -33,7 +36,9 @@ class Socks5AuthRelay(
     private val upstreamHost: String,
     private val upstreamPort: Int,
     username: String,
-    password: String
+    password: String,
+    private val handshakeTimeoutMs: Int = HANDSHAKE_TIMEOUT_MS,
+    private val pipelineGraceMs: Int = PIPELINE_GRACE_MS
 ) {
     companion object {
         private const val TAG = "Socks5AuthRelay"
@@ -42,9 +47,17 @@ class Socks5AuthRelay(
         private const val AUTH_USERNAME = 0x02
         private const val AUTH_NO_ACCEPTABLE = 0xFF
         private const val AUTH_SUBNEGOTIATION_VERSION = 0x01
+        private const val ATYP_IPV4 = 0x01
+        private const val ATYP_DOMAIN = 0x03
+        private const val ATYP_IPV6 = 0x04
+        private const val REPLY_GENERAL_FAILURE = 0x01
+        private const val REPLY_ADDRESS_TYPE_NOT_SUPPORTED = 0x08
         private const val CONNECT_TIMEOUT_MS = 10000
-        // The upstream auth reply travels through the DNS tunnel, which can be slow
+        // The upstream replies travel through the DNS tunnel, which can be slow
         private const val HANDSHAKE_TIMEOUT_MS = 60000
+        // A pipelined auth reply follows the method reply almost at once; a proxy that dropped
+        // the credentials sends nothing, so stop waiting after this (or 3x the method reply time)
+        private const val PIPELINE_GRACE_MS = 3000
         private const val BUFFER_SIZE = 32768
 
         /** Finds a free TCP port on localhost for the tunnel client to listen on behind the relay. */
@@ -53,7 +66,15 @@ class Socks5AuthRelay(
         }
     }
 
-    private val authRequest: ByteArray
+    /** Upstream handshake failure. [methodAccepted]: the proxy had chosen username/password auth. */
+    private class HandshakeException(message: String, val methodAccepted: Boolean) : IOException(message)
+
+    private class UpstreamConnection(val socket: Socket, val reply: ByteArray)
+
+    // Greeting offering only username/password auth: VER(5) NMETHODS(1) METHOD(2)
+    private val greeting = byteArrayOf(SOCKS_VERSION.toByte(), 1, AUTH_USERNAME.toByte())
+    // RFC 1929 request: VER(1) ULEN UNAME PLEN PASSWD
+    private val credentials: ByteArray
     private var serverSocket: ServerSocket? = null
     private var executor: ExecutorService? = null
     private val openSockets: MutableSet<Socket> = ConcurrentHashMap.newKeySet()
@@ -61,16 +82,17 @@ class Socks5AuthRelay(
     @Volatile
     private var running = false
 
+    // Cleared once the upstream proxy turns out to need a step-by-step handshake
+    @Volatile
+    private var pipelining = true
+
     init {
         val usernameBytes = username.toByteArray(Charsets.UTF_8)
         val passwordBytes = password.toByteArray(Charsets.UTF_8)
         require(usernameBytes.isNotEmpty() && usernameBytes.size <= 255) { "Invalid SOCKS5 username length" }
         require(passwordBytes.size <= 255) { "Invalid SOCKS5 password length" }
 
-        // Greeting offering only username/password auth, followed by the RFC 1929 request:
-        // VER(5) NMETHODS(1) METHOD(2) | VER(1) ULEN UNAME PLEN PASSWD
-        authRequest = byteArrayOf(SOCKS_VERSION.toByte(), 1, AUTH_USERNAME.toByte()) +
-            byteArrayOf(AUTH_SUBNEGOTIATION_VERSION.toByte(), usernameBytes.size.toByte()) +
+        credentials = byteArrayOf(AUTH_SUBNEGOTIATION_VERSION.toByte(), usernameBytes.size.toByte()) +
             usernameBytes +
             byteArrayOf(passwordBytes.size.toByte()) +
             passwordBytes
@@ -131,49 +153,58 @@ class Socks5AuthRelay(
         var upstream: Socket? = null
         try {
             client.tcpNoDelay = true
-            client.soTimeout = HANDSHAKE_TIMEOUT_MS
-
-            val sock = Socket()
-            upstream = sock
-            openSockets.add(sock)
-            sock.tcpNoDelay = true
-            sock.connect(InetSocketAddress(upstreamHost, upstreamPort), CONNECT_TIMEOUT_MS)
-            sock.soTimeout = HANDSHAKE_TIMEOUT_MS
-
-            val upstreamIn = sock.getInputStream()
-            val upstreamOut = sock.getOutputStream()
+            client.soTimeout = handshakeTimeoutMs
             val clientIn = client.getInputStream()
             val clientOut = client.getOutputStream()
 
-            // Start upstream authentication while negotiating with the local client
-            upstreamOut.write(authRequest)
-            upstreamOut.flush()
-
             if (!negotiateWithClient(clientIn, clientOut)) {
+                close(client)
+                return
+            }
+
+            val request = readSocksMessage(clientIn)
+            if (request == null || request[0].toInt() != SOCKS_VERSION) {
+                Log.w(TAG, "Unsupported SOCKS5 request from client")
+                sendFailure(clientOut, REPLY_ADDRESS_TYPE_NOT_SUPPORTED)
+                close(client)
+                return
+            }
+
+            val connection = try {
+                connectUpstream(request)
+            } catch (e: IOException) {
+                if (running) Log.e(TAG, "Upstream SOCKS5 ${e.message}")
+                sendFailure(clientOut, REPLY_GENERAL_FAILURE)
+                close(client)
+                return
+            }
+            val sock = connection.socket
+            upstream = sock
+
+            clientOut.write(connection.reply)
+            clientOut.flush()
+            if (connection.reply[1].toInt() != 0x00) {
+                // The upstream proxy refused the request; it has already told the client why
                 close(client, sock)
                 return
             }
 
-            // Forward the client's request (and any data) right away
-            val pending = AtomicInteger(2)
-            executor?.execute {
-                pump(clientIn, upstreamOut, sock)
-                if (pending.decrementAndGet() == 0) close(client, sock)
-            } ?: run {
-                close(client, sock)
-                return
-            }
-
-            if (!readUpstreamAuthReply(upstreamIn)) {
-                close(client, sock)
-                return
-            }
-
+            // The handshake is over: no read timeouts while relaying
             client.soTimeout = 0
             sock.soTimeout = 0
+
+            val upstreamIn = sock.getInputStream()
+            val upstreamOut = sock.getOutputStream()
+            val pending = AtomicInteger(2)
+            val executor = executor ?: throw IOException("Relay stopped")
+            executor.execute {
+                pump(clientIn, upstreamOut, sock)
+                if (pending.decrementAndGet() == 0) close(client, sock)
+            }
             pump(upstreamIn, clientOut, client)
             if (pending.decrementAndGet() == 0) close(client, sock)
-        } catch (e: IOException) {
+        } catch (e: Exception) {
+            // Any exception escaping a pool thread would crash the app
             if (running) Log.w(TAG, "Relay connection failed: ${e.message}")
             close(client, upstream)
         }
@@ -212,19 +243,96 @@ class Socks5AuthRelay(
         return true
     }
 
-    private fun readUpstreamAuthReply(input: InputStream): Boolean {
-        val methodReply = readFully(input, 2)
-        val method = methodReply[1].toInt() and 0xFF
-        if (methodReply[0].toInt() != SOCKS_VERSION || method != AUTH_USERNAME) {
-            Log.e(TAG, "Upstream SOCKS5 proxy did not accept username/password auth (method=$method)")
-            return false
+    /** Opens an authenticated upstream connection and sends [request] on it. */
+    private fun connectUpstream(request: ByteArray): UpstreamConnection {
+        if (!pipelining) return handshake(request, pipelined = false)
+        try {
+            return handshake(request, pipelined = true)
+        } catch (e: HandshakeException) {
+            if (!e.methodAccepted) throw e
+            if (running) Log.w(TAG, "Pipelined SOCKS5 handshake failed (${e.message}), retrying step by step")
         }
-        val authReply = readFully(input, 2)
-        if (authReply[1].toInt() != 0x00) {
-            Log.e(TAG, "Upstream SOCKS5 authentication failed (status=${authReply[1]})")
-            return false
+        val connection = handshake(request, pipelined = false)
+        if (pipelining) {
+            pipelining = false
+            Log.i(TAG, "Upstream SOCKS5 proxy needs a step-by-step handshake, pipelining disabled")
         }
-        return true
+        return connection
+    }
+
+    private fun handshake(request: ByteArray, pipelined: Boolean): UpstreamConnection {
+        val socket = Socket()
+        openSockets.add(socket)
+        var methodAccepted = false
+        try {
+            socket.tcpNoDelay = true
+            socket.connect(InetSocketAddress(upstreamHost, upstreamPort), CONNECT_TIMEOUT_MS)
+            socket.soTimeout = handshakeTimeoutMs
+            val input = socket.getInputStream()
+            val output = socket.getOutputStream()
+
+            val startTime = System.currentTimeMillis()
+            output.write(if (pipelined) greeting + credentials + request else greeting)
+            output.flush()
+
+            val methodReply = readFully(input, 2)
+            val method = methodReply[1].toInt() and 0xFF
+            if (methodReply[0].toInt() != SOCKS_VERSION || method != AUTH_USERNAME) {
+                throw HandshakeException("proxy did not accept username/password auth (method=$method)", false)
+            }
+            methodAccepted = true
+
+            if (pipelined) {
+                val elapsed = (System.currentTimeMillis() - startTime).toInt()
+                socket.soTimeout = minOf(handshakeTimeoutMs, maxOf(pipelineGraceMs, elapsed * 3))
+            } else {
+                output.write(credentials)
+                output.flush()
+            }
+            val authReply = readFully(input, 2)
+            if (authReply[1].toInt() != 0x00) {
+                throw HandshakeException("authentication failed (status=${authReply[1]})", true)
+            }
+            socket.soTimeout = handshakeTimeoutMs
+
+            if (!pipelined) {
+                output.write(request)
+                output.flush()
+            }
+            val reply = readSocksMessage(input)
+            if (reply == null || reply[0].toInt() != SOCKS_VERSION) {
+                throw HandshakeException("proxy sent an invalid reply", true)
+            }
+            return UpstreamConnection(socket, reply)
+        } catch (e: IOException) {
+            close(socket)
+            if (e is HandshakeException) throw e
+            throw HandshakeException("handshake failed: ${e.message}", methodAccepted)
+        }
+    }
+
+    /** Reads a SOCKS5 request or reply (both share one layout); null for an unknown address type. */
+    private fun readSocksMessage(input: InputStream): ByteArray? {
+        val header = readFully(input, 4)
+        val address = when (header[3].toInt()) {
+            ATYP_IPV4 -> readFully(input, 4)
+            ATYP_IPV6 -> readFully(input, 16)
+            ATYP_DOMAIN -> {
+                val length = readFully(input, 1)
+                length + readFully(input, length[0].toInt() and 0xFF)
+            }
+            else -> return null
+        }
+        return header + address + readFully(input, 2)
+    }
+
+    private fun sendFailure(output: OutputStream, reply: Int) {
+        try {
+            output.write(byteArrayOf(SOCKS_VERSION.toByte(), reply.toByte(), 0x00, ATYP_IPV4.toByte(), 0, 0, 0, 0, 0, 0))
+            output.flush()
+        } catch (e: IOException) {
+            // The client is gone
+        }
     }
 
     private fun pump(input: InputStream, output: OutputStream, destination: Socket) {
@@ -238,7 +346,7 @@ class Socks5AuthRelay(
             }
             // Propagate EOF so half-closed connections keep working
             destination.shutdownOutput()
-        } catch (e: IOException) {
+        } catch (e: Exception) {
             closeQuietly(destination)
         }
     }

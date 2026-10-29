@@ -65,6 +65,68 @@ class FakeUpstream {
   }
 }
 
+/// SOCKS5 server that handles each read as one message and drops the bytes after it, as
+/// microsocks does. A pipelined handshake loses the credentials and stalls on it.
+class MessagePerReadUpstream {
+  final String username;
+  final String password;
+  late final ServerSocket server;
+  var connections = 0;
+  final connectTargets = <String>[];
+
+  MessagePerReadUpstream(this.username, this.password);
+
+  int get port => server.port;
+
+  Future<void> start() async {
+    server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen(_handle);
+  }
+
+  Future<void> close() => server.close();
+
+  void _handle(Socket socket) {
+    connections++;
+    var state = 0;
+    socket.listen((data) {
+      try {
+        switch (state) {
+          case 0:
+            if (!data.sublist(2, 2 + data[1]).contains(0x02)) {
+              socket.add([0x05, 0xFF]);
+              socket.close();
+              return;
+            }
+            socket.add([0x05, 0x02]);
+            state = 1;
+          case 1:
+            final userLength = data[1];
+            final user = utf8.decode(data.sublist(2, 2 + userLength));
+            final pass = utf8.decode(data.sublist(3 + userLength, 3 + userLength + data[2 + userLength]));
+            if (data[0] != 0x01 || user != username || pass != password) {
+              socket.add([0x01, 0x01]);
+              socket.close();
+              return;
+            }
+            socket.add([0x01, 0x00]);
+            state = 2;
+          case 2:
+            final hostLength = data[4];
+            final host = utf8.decode(data.sublist(5, 5 + hostLength));
+            connectTargets.add('$host:${data[5 + hostLength] << 8 | data[6 + hostLength]}');
+            socket.add([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]);
+            state = 3;
+          default:
+            socket.add(data);
+        }
+      } catch (_) {
+        // Malformed message
+        socket.destroy();
+      }
+    }, onError: (_) => socket.destroy(), onDone: socket.destroy);
+  }
+}
+
 /// Buffers socket data so tests can read exact byte counts.
 class _Reader {
   final _buffer = BytesBuilder();
@@ -120,17 +182,39 @@ void main() {
   late Socks5AuthRelay relay;
   late int relayPort;
 
-  Future<void> startRelay(String username, String password) async {
+  Future<void> startRelay(
+    String username,
+    String password, {
+    int? upstreamPort,
+    Duration handshakeTimeout = Socks5AuthRelay.defaultHandshakeTimeout,
+    Duration pipelineGrace = Socks5AuthRelay.defaultPipelineGrace,
+  }) async {
     relayPort = await Socks5AuthRelay.findFreePort();
     relay = Socks5AuthRelay(
       bindHost: '127.0.0.1',
       bindPort: relayPort,
       upstreamHost: '127.0.0.1',
-      upstreamPort: upstream.port,
+      upstreamPort: upstreamPort ?? upstream.port,
       username: username,
       password: password,
+      handshakeTimeout: handshakeTimeout,
+      pipelineGrace: pipelineGrace,
     );
     expect(await relay.start(), isTrue);
+  }
+
+  /// Connects through the relay without auth and checks that data is echoed back.
+  Future<void> connectAndPing(String host, int port) async {
+    final client = await Socket.connect('127.0.0.1', relayPort);
+    final reader = _Reader(client);
+
+    client.add([0x05, 0x01, 0x00]);
+    expect(await reader.read(2), [0x05, 0x00]);
+    client.add(connectRequest(host, port));
+    expect((await reader.read(10)).sublist(0, 2), [0x05, 0x00]);
+    client.add(utf8.encode('ping'));
+    expect(utf8.decode(await reader.read(4)), 'ping');
+    client.destroy();
   }
 
   setUp(() async {
@@ -208,6 +292,8 @@ void main() {
     client.add([0x05, 0x01, 0x00]);
     expect(await reader.read(2), [0x05, 0x00]);
     client.add(connectRequest('example.com', 443));
+    // General SOCKS server failure, then the relay closes the connection
+    expect((await reader.read(10)).sublist(0, 2), [0x05, 0x01]);
 
     expect(await reader.closed.timeout(const Duration(seconds: 5)), isTrue);
     expect(upstream.connectTargets, isEmpty);
@@ -218,5 +304,42 @@ void main() {
     await startRelay('user', 'pässword');
     await relay.stop();
     await expectLater(Socket.connect('127.0.0.1', relayPort), throwsA(isA<SocketException>()));
+  });
+
+  test('upstream dropping pipelined data gets a step-by-step handshake', () async {
+    final strictUpstream = MessagePerReadUpstream('user', 'pässword');
+    await strictUpstream.start();
+    try {
+      await startRelay('user', 'pässword',
+          upstreamPort: strictUpstream.port, pipelineGrace: const Duration(milliseconds: 200));
+
+      // The pipelined attempt stalls, the step-by-step retry on a new connection succeeds
+      await connectAndPing('example.com', 443);
+      expect(strictUpstream.connections, 2);
+
+      // Later connections go step by step right away
+      await connectAndPing('example.org', 80);
+      expect(strictUpstream.connections, 3);
+      expect(strictUpstream.connectTargets, ['example.com:443', 'example.org:80']);
+    } finally {
+      await strictUpstream.close();
+    }
+  });
+
+  test('connection idle longer than the handshake timeout stays open', () async {
+    await startRelay('user', 'pässword', handshakeTimeout: const Duration(milliseconds: 500));
+
+    final client = await Socket.connect('127.0.0.1', relayPort);
+    final reader = _Reader(client);
+
+    client.add([0x05, 0x01, 0x00]);
+    expect(await reader.read(2), [0x05, 0x00]);
+    client.add(connectRequest('example.com', 443));
+    expect((await reader.read(10)).sublist(0, 2), [0x05, 0x00]);
+
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    client.add(utf8.encode('ping'));
+    expect(utf8.decode(await reader.read(4)), 'ping');
+    client.destroy();
   });
 }

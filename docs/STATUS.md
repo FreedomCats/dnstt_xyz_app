@@ -14,6 +14,7 @@ environment details, servers, credentials or other personal data.
   3. English-only rule for comments, commits, memory and docs.
   4. Translation of `AGENTS.md` and `docs/CODE_REVIEW.md` into English.
   5. Upstream SOCKS5 username/password auth (see below).
+  6. Fixes to the SOCKS5 auth relay after review (see below).
 - No pull requests are open yet.
 
 ## Done: upstream SOCKS5 auth (upstream issue #15)
@@ -29,9 +30,14 @@ Solution:
   auth is configured.
 - With credentials, the tunnel client (dnstt or slipstream) listens on a free
   localhost port and a local relay takes the user-facing proxy address. The
-  relay accepts local clients without auth, authenticates upstream and passes
-  the stream through. Greeting and credentials are pipelined, so auth adds no
-  round trip through the tunnel.
+  relay accepts local clients without auth, reads the client's request,
+  authenticates upstream and passes the stream through. Greeting, credentials
+  and request go upstream in one write, so auth adds no round trip through the
+  tunnel. Proxies that handle each read as one message (microsocks) drop the
+  pipelined bytes; when the proxy accepts username/password auth but the
+  pipelined handshake fails or stalls (auth reply not within 3 s or 3x the
+  method reply time), the relay retries step by step and keeps that mode for
+  the rest of the session.
   - Android: `android/app/src/main/kotlin/xyz/dnstt/app/Socks5AuthRelay.kt`,
     used by `DnsttVpnService`, `DnsttProxyService`, `SlipstreamProxyService` and
     the DNS server tests in `MainActivity`. The prebuilt `dnstt.aar` is unchanged.
@@ -40,10 +46,22 @@ Solution:
     `dnstt_test_dns_server_auth` (`go_src/desktop/desktop.go`). Old desktop
     libraries without that symbol still load; only authenticated DNSTT tests
     fail on them.
-- Tests: `test/socks5_auth_relay_test.dart` (5 tests) and
-  `android/app/src/test/kotlin/xyz/dnstt/app/Socks5AuthRelayTest.kt` (4 tests)
-  run the relays against a fake SOCKS5 server that requires auth. All pass;
-  the debug APK builds; `flutter analyze` shows no new issues; `go vet` passes.
+- Review fixes (commit 6):
+  - fallback to a step-by-step handshake for proxies like microsocks (above);
+  - the Kotlin relay starts relaying only after the handshake and after
+    clearing read timeouts; before, a client idle for 60 s after CONNECT was
+    disconnected;
+  - the Kotlin relay catches every exception in its pool threads (an uncaught
+    one crashes the app on Android);
+  - on upstream failure the client gets a SOCKS5 "general failure" reply
+    before the relay closes the connection.
+- Tests: `test/socks5_auth_relay_test.dart` (7 tests) and
+  `android/app/src/test/kotlin/xyz/dnstt/app/Socks5AuthRelayTest.kt` (6 tests)
+  run the relays against a fake SOCKS5 server that requires auth and against a
+  fake that handles each read as one message, like microsocks. They include an
+  idle-connection test. The new tests fail on the relays from commit 5. All
+  pass; the debug APK builds; `flutter analyze` shows only `avoid_print` infos
+  in the relay, like the rest of `lib/services/`.
 - Not yet verified against a real server and device.
 
 ## Next steps
@@ -51,10 +69,12 @@ Solution:
 1. **Live check of SOCKS5 auth** on a device with a real server: VPN and proxy
    modes, DNSTT and Slipstream, DNS server tests, wrong password (expect
    `Socks5AuthRelay: Upstream SOCKS5 authentication failed` in logcat).
+   Check both a proxy that accepts pipelining (Dante, 3proxy or a Go server)
+   and microsocks with `-u`/`-P` (expect `pipelining disabled` once in logcat).
 2. **Upstream pull request for issue #15** (the user wants it visible upstream):
-   - branch from current upstream `master`, cherry-pick only the SOCKS5 auth
-     commit (its `CLAUDE.md` hunk may conflict: upstream has no `@AGENTS.md`
-     line);
+   - branch from current upstream `master`, cherry-pick the SOCKS5 auth commit
+     and the review fixes (the `CLAUDE.md` hunks may conflict: upstream has no
+     `@AGENTS.md` line);
    - rerun Dart and Kotlin tests and the APK build;
    - PR body with `Closes #15`. This session has no access to the upstream
      repository: the user opens the PR from the fork, or access is attached.

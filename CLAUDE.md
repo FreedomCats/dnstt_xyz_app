@@ -379,8 +379,11 @@ username/password authentication (RFC 1929):
   user-facing address (`127.0.0.1:<port>`, or `0.0.0.0:<port>` with proxy sharing)
 - Local clients (VPN TCP stack, tunnel verification, DNS tests, other apps) connect without auth;
   the relay authenticates upstream and passes the rest of the stream through unchanged
-- The upstream greeting and credentials are sent together and the client's request is forwarded
-  without waiting for the auth reply, so auth adds no round trip through the DNS tunnel
+- The relay reads the client's request and sends the upstream greeting, credentials and request
+  in one write, so auth adds no round trip through the DNS tunnel
+- Some proxies (microsocks, for example) handle each read as one message and drop the bytes after
+  it. If the proxy accepts username/password auth but the pipelined handshake does not complete,
+  the relay retries the connection step by step and keeps that mode for later connections
 - Kotlin version for Android (VPN, proxy services, DNS tests), Dart version for desktop
 - Desktop DNSTT DNS tests authenticate in Go (`dnstt_test_dns_server_auth` in `go_src/desktop`)
 
