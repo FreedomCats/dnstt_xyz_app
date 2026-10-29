@@ -40,6 +40,10 @@ jobs:
       - name: Dart tests
         run: flutter test test/socks5_auth_relay_test.dart
 
+      # android/gradlew is not in git: Flutter generates it
+      - name: Generate Gradle wrapper
+        run: flutter build apk --config-only
+
       - name: Kotlin unit tests
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest

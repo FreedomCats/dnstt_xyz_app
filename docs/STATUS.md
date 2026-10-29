@@ -16,7 +16,7 @@ environment details, servers, credentials or other personal data.
   5. Upstream SOCKS5 username/password auth (see below).
   6. Fixes to the SOCKS5 auth relay after review (see below).
   7. CI builds and release signing (see below).
-- No pull requests are open yet. GitHub Actions in the fork have not run yet.
+- No pull requests are open yet. GitHub Actions are enabled in the fork.
 
 ## Done: upstream SOCKS5 auth (upstream issue #15)
 
@@ -140,6 +140,8 @@ Solution:
 - `flutter pub get` rewrites `linux/flutter/generated_plugins.cmake` and
   `windows/flutter/generated_plugins.cmake`; revert them before committing.
   Gradle unit tests leave `android/build/`; delete it.
+- `android/gradlew` and the wrapper jar are not in git (`android/.gitignore`);
+  `flutter build apk --config-only` generates them in a few seconds.
 - Run tests:
   - `flutter test test/socks5_auth_relay_test.dart`
   - `cd android && ./gradlew :app:testDebugUnitTest --tests 'xyz.dnstt.app.Socks5AuthRelayTest'`
