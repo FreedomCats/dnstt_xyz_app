@@ -41,6 +41,7 @@ class DnsttProxyService : Service() {
     }
 
     private var dnsServer: String = "8.8.8.8"
+    private var resolverOptions = ResolverOptions()
     private var tunnelDomain: String = ""
     private var publicKey: String = ""
     private var proxyPort: Int = 7000
@@ -63,6 +64,7 @@ class DnsttProxyService : Service() {
         return when (intent?.action) {
             ACTION_CONNECT -> {
                 dnsServer = intent.getStringExtra(EXTRA_DNS_SERVER) ?: "8.8.8.8"
+                resolverOptions = ResolverOptions.from(intent)
                 tunnelDomain = intent.getStringExtra(EXTRA_TUNNEL_DOMAIN) ?: ""
                 publicKey = intent.getStringExtra(EXTRA_PUBLIC_KEY) ?: ""
                 proxyPort = intent.getIntExtra(EXTRA_PROXY_PORT, 7000)
@@ -187,6 +189,7 @@ class DnsttProxyService : Service() {
             Log.d(TAG, "Listen address: $listenAddr")
 
             dnsttClient = Mobile.newClient(dnsServer, tunnelDomain, publicKey, listenAddr)
+            dnsttClient?.let { resolverOptions.applyTo(it) }
 
             if (shareProxy && !useSocksAuth) {
                 dnsttClient?.setShareProxy(true)

@@ -1,0 +1,17 @@
+{
+  "country": "Encrypted (DoH/DoT)",
+  "countryCode": "encrypted",
+  "description": "Public DNS over HTTPS and DNS over TLS resolvers. The bootstrap address is dialed instead of looking up the resolver's name.",
+  "servers": [
+    {"name": "Google DoH", "ip": "https://dns.google/dns-query", "bootstrap": "8.8.8.8"},
+    {"name": "Google DoT", "ip": "tls://dns.google", "bootstrap": "8.8.8.8"},
+    {"name": "Cloudflare DoH", "ip": "https://cloudflare-dns.com/dns-query", "bootstrap": "1.1.1.1"},
+    {"name": "Cloudflare DoT", "ip": "tls://one.one.one.one", "bootstrap": "1.1.1.1"},
+    {"name": "Quad9 DoH", "ip": "https://dns.quad9.net/dns-query", "bootstrap": "9.9.9.9"},
+    {"name": "Quad9 DoT", "ip": "tls://dns.quad9.net", "bootstrap": "9.9.9.9"},
+    {"name": "AdGuard Unfiltered DoH", "ip": "https://unfiltered.adguard-dns.com/dns-query", "bootstrap": "94.140.14.140"},
+    {"name": "AdGuard Unfiltered DoT", "ip": "tls://unfiltered.adguard-dns.com", "bootstrap": "94.140.14.140"},
+    {"name": "Mullvad DoH", "ip": "https://dns.mullvad.net/dns-query", "bootstrap": "194.242.2.2"},
+    {"name": "Mullvad DoT", "ip": "tls://dns.mullvad.net", "bootstrap": "194.242.2.2"}
+  ]
+}

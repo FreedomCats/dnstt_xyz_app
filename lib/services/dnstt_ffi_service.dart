@@ -1,6 +1,7 @@
 import 'dart:ffi';
 import 'dart:io';
 import 'package:ffi/ffi.dart';
+import '../models/resolver_spec.dart';
 
 /// FFI bindings for the dnstt Go library
 /// Used on desktop platforms (macOS, Windows, Linux)
@@ -23,6 +24,17 @@ class DnsttFfiService {
   // Optional: missing in libraries built before upstream SOCKS5 auth support
   int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int, Pointer<Utf8>, Pointer<Utf8>)?
       _testDnsServerAuth;
+  // Optional: missing in libraries built before DoH/DoT support
+  int Function(Pointer<Utf8>)? _setBootstrap;
+  int Function(Pointer<Utf8>)? _setTlsFingerprint;
+  int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int,
+      Pointer<Utf8>, Pointer<Utf8>)? _testDnsServerEx;
+
+  /// Error found on the Dart side, reported by [getLastError] instead of the
+  /// library's.
+  String? _localError;
+
+  static const _tooOldForDoh = 'dnstt library too old for DoH/DoT servers, rebuild libdnstt';
 
   DnsttFfiService._();
 
@@ -158,6 +170,20 @@ class DnsttFfiService {
             int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int, Pointer<Utf8>, Pointer<Utf8>)
         >('dnstt_test_dns_server_auth');
       }
+      if (_lib!.providesSymbol('dnstt_set_bootstrap') &&
+          _lib!.providesSymbol('dnstt_set_tls_fingerprint') &&
+          _lib!.providesSymbol('dnstt_test_dns_server_ex')) {
+        _setBootstrap = _lib!.lookupFunction<Int32 Function(Pointer<Utf8>), int Function(Pointer<Utf8>)>(
+            'dnstt_set_bootstrap');
+        _setTlsFingerprint = _lib!.lookupFunction<Int32 Function(Pointer<Utf8>), int Function(Pointer<Utf8>)>(
+            'dnstt_set_tls_fingerprint');
+        _testDnsServerEx = _lib!.lookupFunction<
+            Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>,
+                Int32, Pointer<Utf8>, Pointer<Utf8>),
+            int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>,
+                int, Pointer<Utf8>, Pointer<Utf8>)
+        >('dnstt_test_dns_server_ex');
+      }
 
       _loaded = true;
       _loading = false;
@@ -168,10 +194,21 @@ class DnsttFfiService {
     }
   }
 
-  /// Create a new dnstt client
+  /// Whether the library supports DoH/DoT resolvers, bootstrap addresses and
+  /// TLS fingerprints.
+  bool get supportsEncryptedDns => _testDnsServerEx != null;
+
+  /// Whether [dnsServer] needs a library with DoH/DoT support.
+  static bool _needsEncryptedDns(String dnsServer) =>
+      (ResolverSpec.kindOf(dnsServer) ?? ResolverKind.udp) != ResolverKind.udp;
+
+  /// Create a new dnstt client. [dnsServer] is a resolver spec; [dnsBootstrap]
+  /// and [tlsFingerprint] apply to DoH and DoT resolvers.
   /// Returns true on success, false on failure
   bool createClient({
     required String dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     required String tunnelDomain,
     required String publicKey,
     String listenAddr = '127.0.0.1:1080',
@@ -179,20 +216,33 @@ class DnsttFfiService {
     if (!_loaded) {
       throw StateError('Library not loaded. Call load() first.');
     }
+    _localError = null;
+    final setBootstrap = _setBootstrap;
+    final setTlsFingerprint = _setTlsFingerprint;
+    if (_needsEncryptedDns(dnsServer) && (setBootstrap == null || setTlsFingerprint == null)) {
+      _localError = _tooOldForDoh;
+      return false;
+    }
 
     final dnsServerPtr = dnsServer.toNativeUtf8();
     final tunnelDomainPtr = tunnelDomain.toNativeUtf8();
     final publicKeyPtr = publicKey.toNativeUtf8();
     final listenAddrPtr = listenAddr.toNativeUtf8();
+    final bootstrapPtr = (dnsBootstrap ?? '').toNativeUtf8();
+    final fingerprintPtr = tlsFingerprint.toNativeUtf8();
 
     try {
-      final result = _createClient(dnsServerPtr, tunnelDomainPtr, publicKeyPtr, listenAddrPtr);
-      return result == 0;
+      if (_createClient(dnsServerPtr, tunnelDomainPtr, publicKeyPtr, listenAddrPtr) != 0) return false;
+      if (setBootstrap != null && setBootstrap(bootstrapPtr) != 0) return false;
+      if (setTlsFingerprint != null && setTlsFingerprint(fingerprintPtr) != 0) return false;
+      return true;
     } finally {
       calloc.free(dnsServerPtr);
       calloc.free(tunnelDomainPtr);
       calloc.free(publicKeyPtr);
       calloc.free(listenAddrPtr);
+      calloc.free(bootstrapPtr);
+      calloc.free(fingerprintPtr);
     }
   }
 
@@ -223,6 +273,8 @@ class DnsttFfiService {
   /// Get the last error message
   String getLastError() {
     if (!_loaded) return 'Library not loaded';
+    final localError = _localError;
+    if (localError != null) return localError;
 
     final errorPtr = _getLastError();
     if (errorPtr == nullptr) return '';
@@ -236,6 +288,8 @@ class DnsttFfiService {
   /// Returns latency in milliseconds on success, -1 on failure
   int testDnsServer({
     required String dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     required String tunnelDomain,
     required String publicKey,
     String testUrl = 'https://api.ipify.org?format=json',
@@ -244,6 +298,29 @@ class DnsttFfiService {
     String? socksPassword,
   }) {
     if (!_loaded) {
+      return -1;
+    }
+
+    final testDnsServerEx = _testDnsServerEx;
+    if (testDnsServerEx != null) {
+      final ptrs = [
+        dnsServer,
+        dnsBootstrap ?? '',
+        tlsFingerprint,
+        tunnelDomain,
+        publicKey,
+        testUrl,
+        socksUsername ?? '',
+        socksPassword ?? '',
+      ].map((v) => v.toNativeUtf8()).toList();
+      try {
+        return testDnsServerEx(ptrs[0], ptrs[1], ptrs[2], ptrs[3], ptrs[4], ptrs[5], timeoutMs, ptrs[6], ptrs[7]);
+      } finally {
+        ptrs.forEach(calloc.free);
+      }
+    }
+    if (_needsEncryptedDns(dnsServer)) {
+      print(_tooOldForDoh);
       return -1;
     }
 

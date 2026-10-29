@@ -5,6 +5,7 @@ import 'dnstt_ffi_service.dart';
 import 'slipstream_service.dart';
 import 'socks5_auth_relay.dart';
 import '../models/dnstt_config.dart';
+import '../models/resolver_spec.dart';
 
 enum VpnState {
   disconnected,
@@ -185,6 +186,8 @@ class VpnService {
     required String proxyHost,
     required int proxyPort,
     String? dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     String? tunnelDomain,
     String? publicKey,
     String? socksUsername,
@@ -203,6 +206,8 @@ class VpnService {
     if (_isDesktop) {
       return _connectDesktop(
         dnsServer: dnsServer ?? '8.8.8.8',
+        dnsBootstrap: dnsBootstrap,
+        tlsFingerprint: tlsFingerprint,
         tunnelDomain: tunnelDomain ?? '',
         publicKey: publicKey ?? '',
         socksUsername: socksUsername,
@@ -222,6 +227,8 @@ class VpnService {
       final params = Platform.isIOS
           ? {
               'dnsServer': dnsServer ?? '8.8.8.8',
+              'dnsBootstrap': dnsBootstrap,
+              'tlsFingerprint': tlsFingerprint,
               'tunnelDomain': tunnelDomain ?? '',
               'publicKey': publicKey ?? '',
             }
@@ -230,6 +237,8 @@ class VpnService {
               'proxyHost': proxyHost,
               'proxyPort': proxyPort,
               'dnsServer': dnsServer ?? '8.8.8.8',
+              'dnsBootstrap': dnsBootstrap,
+              'tlsFingerprint': tlsFingerprint,
               'tunnelDomain': tunnelDomain ?? '',
               'publicKey': publicKey ?? '',
               'socksUsername': socksUsername,
@@ -393,6 +402,8 @@ class VpnService {
   /// Connect on desktop using FFI
   Future<bool> _connectDesktop({
     required String dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     required String tunnelDomain,
     required String publicKey,
     String? socksUsername,
@@ -420,6 +431,8 @@ class VpnService {
       final tunnelPort = await _desktopTunnelPort(socksUsername);
       final created = ffi.createClient(
         dnsServer: dnsServer,
+        dnsBootstrap: dnsBootstrap,
+        tlsFingerprint: tlsFingerprint,
         tunnelDomain: tunnelDomain,
         publicKey: publicKey,
         listenAddr: '127.0.0.1:$tunnelPort',
@@ -565,6 +578,12 @@ class VpnService {
     String? socksUsername,
     String? socksPassword,
   }) async {
+    if ((ResolverSpec.kindOf(dnsServer) ?? ResolverKind.udp) != ResolverKind.udp) {
+      _lastError = SlipstreamService.udpOnlyMessage;
+      _currentState = VpnState.error;
+      _stateController.add(_currentState);
+      return false;
+    }
     _currentState = VpnState.connecting;
     _stateController.add(_currentState);
     _lastError = null;
@@ -641,6 +660,12 @@ class VpnService {
     String? socksUsername,
     String? socksPassword,
   }) async {
+    if ((ResolverSpec.kindOf(dnsServer) ?? ResolverKind.udp) != ResolverKind.udp) {
+      _lastError = SlipstreamService.udpOnlyMessage;
+      _currentState = VpnState.error;
+      _stateController.add(_currentState);
+      return false;
+    }
     if (_isDesktop) {
       return connectSlipstream(
         dnsServer: dnsServer,
@@ -786,6 +811,8 @@ class VpnService {
   /// DNSTT creates TCP tunnel on internal port 7001, SSH creates SOCKS5 on configured proxy port
   Future<bool> _connectSshTunnelDesktop({
     required String dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     required String tunnelDomain,
     required String publicKey,
     required String sshUsername,
@@ -820,6 +847,8 @@ class VpnService {
       // Create the DNSTT client on internal port
       final created = ffi.createClient(
         dnsServer: dnsServer,
+        dnsBootstrap: dnsBootstrap,
+        tlsFingerprint: tlsFingerprint,
         tunnelDomain: tunnelDomain,
         publicKey: publicKey,
         listenAddr: '127.0.0.1:7001',
@@ -990,6 +1019,8 @@ class VpnService {
   /// Connect in proxy-only mode on Android (no VPN, just SOCKS5 proxy)
   Future<bool> connectProxy({
     String? dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     String? tunnelDomain,
     String? publicKey,
     int proxyPort = 1080,
@@ -1002,6 +1033,8 @@ class VpnService {
         proxyHost: '127.0.0.1',
         proxyPort: proxyPort,
         dnsServer: dnsServer,
+        dnsBootstrap: dnsBootstrap,
+        tlsFingerprint: tlsFingerprint,
         tunnelDomain: tunnelDomain,
         publicKey: publicKey,
         socksUsername: socksUsername,
@@ -1029,6 +1062,8 @@ class VpnService {
     try {
       final result = await _channel.invokeMethod<bool>('connectProxy', {
         'dnsServer': dnsServer ?? '8.8.8.8',
+        'dnsBootstrap': dnsBootstrap,
+        'tlsFingerprint': tlsFingerprint,
         'tunnelDomain': tunnelDomain ?? '',
         'publicKey': publicKey ?? '',
         'proxyPort': proxyPort,
@@ -1132,6 +1167,8 @@ class VpnService {
   /// Flow: DNSTT tunnel -> SSH client -> SSH dynamic port forwarding -> local SOCKS5 proxy on configured port
   Future<bool> connectSshTunnel({
     String? dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     String? tunnelDomain,
     String? publicKey,
     required String sshUsername,
@@ -1141,6 +1178,8 @@ class VpnService {
     if (_isDesktop) {
       return _connectSshTunnelDesktop(
         dnsServer: dnsServer ?? '8.8.8.8',
+        dnsBootstrap: dnsBootstrap,
+        tlsFingerprint: tlsFingerprint,
         tunnelDomain: tunnelDomain ?? '',
         publicKey: publicKey ?? '',
         sshUsername: sshUsername,
@@ -1168,6 +1207,8 @@ class VpnService {
     try {
       final result = await _channel.invokeMethod<bool>('connectSshTunnel', {
         'dnsServer': dnsServer ?? '8.8.8.8',
+        'dnsBootstrap': dnsBootstrap,
+        'tlsFingerprint': tlsFingerprint,
         'tunnelDomain': tunnelDomain ?? '',
         'publicKey': publicKey ?? '',
         'sshUsername': sshUsername,
@@ -1203,6 +1244,8 @@ class VpnService {
   /// Android only - on desktop, use connectSshTunnel instead
   Future<bool> connectSshTunnelVpn({
     String? dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     String? tunnelDomain,
     String? publicKey,
     required String sshUsername,
@@ -1213,6 +1256,8 @@ class VpnService {
       // Desktop doesn't have VPN mode, use regular SSH tunnel
       return connectSshTunnel(
         dnsServer: dnsServer,
+        dnsBootstrap: dnsBootstrap,
+        tlsFingerprint: tlsFingerprint,
         tunnelDomain: tunnelDomain,
         publicKey: publicKey,
         sshUsername: sshUsername,
@@ -1241,6 +1286,8 @@ class VpnService {
     try {
       final result = await _channel.invokeMethod<bool>('connectSshTunnelVpn', {
         'dnsServer': dnsServer ?? '8.8.8.8',
+        'dnsBootstrap': dnsBootstrap,
+        'tlsFingerprint': tlsFingerprint,
         'tunnelDomain': tunnelDomain ?? '',
         'publicKey': publicKey ?? '',
         'sshUsername': sshUsername,
@@ -1368,6 +1415,8 @@ class VpnService {
   /// Returns latency in milliseconds on success, -1 on failure, -2 on cancelled
   Future<int> testDnsServer({
     required String dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     required String tunnelDomain,
     required String publicKey,
     String testUrl = 'https://api.ipify.org?format=json',
@@ -1384,6 +1433,8 @@ class VpnService {
         }
         return ffi.testDnsServer(
           dnsServer: dnsServer,
+          dnsBootstrap: dnsBootstrap,
+          tlsFingerprint: tlsFingerprint,
           tunnelDomain: tunnelDomain,
           publicKey: publicKey,
           testUrl: testUrl,
@@ -1405,6 +1456,8 @@ class VpnService {
     try {
       final result = await _channel.invokeMethod<int>('testDnsServer', {
         'dnsServer': dnsServer,
+        'dnsBootstrap': dnsBootstrap,
+        'tlsFingerprint': tlsFingerprint,
         'tunnelDomain': tunnelDomain,
         'publicKey': publicKey,
         'testUrl': testUrl,

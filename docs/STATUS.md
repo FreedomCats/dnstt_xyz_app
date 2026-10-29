@@ -24,9 +24,11 @@ environment details, servers, credentials or other personal data.
      (`docs/STAGE1_GO_LIBRARY_CI.md`, see below).
   10. Stage 2: DoH and DoT in the Go library (`docs/STAGE2_GO_DOH_DOT.md`,
       see below).
+  11. Stage 3: DoH and DoT for DNSTT in the app (`docs/STAGE3_APP_DOH_DOT.md`,
+      see below).
 - No pull requests are open yet. GitHub Actions are enabled in the fork, and
   the four signing secrets are set. No release has been made yet; the user
-  does not want one for now.
+  will say when they want one.
 
 ## Done: upstream SOCKS5 auth (upstream issue #15)
 
@@ -77,8 +79,8 @@ Solution:
 
 ## Done: CI builds and release signing
 
-- `.github/workflows/ci.yml`: on every push and pull request runs the relay
-  Dart tests, the Kotlin unit tests and `go test ./...`, then builds release
+- `.github/workflows/ci.yml`: on every push and pull request runs the Dart
+  tests (relay, resolver specs, DNS server import), the Kotlin unit tests and `go test ./...`, then builds release
   APKs (split by ABI) and uploads them as the `android-apks` artifact for 14
   days. The job summary shows the signing certificate.
 - `.github/workflows/release.yml` (from upstream, tags `v*`): the Android job
@@ -169,14 +171,36 @@ Solution:
   `dnstt-server`. The AAR is about twice as large (11 MB, +3.5 MB per ABI).
 - `ci.yml` is green (Go tests with the end-to-end test, Kotlin tests, signed
   APKs); the CI `.so` checksums equal those of a local build.
-- The app does not use DoH/DoT yet (stage 3); it passes plain addresses as
-  before.
+- The app uses DoH/DoT since stage 3 (below).
+
+## Done: DoH and DoT for DNSTT in the app (stage 3)
+
+- DNS server addresses are resolver specs: IP, `IP:port`, IPv6, host names,
+  `udp://`, `https://` (DoH) and `tls://` (DoT). `lib/models/resolver_spec.dart`
+  ports the Go parser (same test table); stored entries stay valid. Optional
+  per-server bootstrap IP; global "DoH/DoT TLS Fingerprint" setting.
+- UI: add dialog with address and bootstrap fields, `DoH`/`DoT` badges, the
+  bundled group "Encrypted (DoH/DoT)" (Google, Cloudflare, Quad9, AdGuard
+  unfiltered, Mullvad). Import/export carry `bootstrap`.
+- Android: every DNSTT path (VPN, proxy, shared proxy, both SSH modes, DNS
+  tests) passes spec, bootstrap and fingerprint (`ResolverOptions.kt`). VPN
+  mode announces `198.18.0.2` as the device's DNS server and forwards queries
+  through a bounded executor to the UDP resolver or, for DoH/DoT, to a local
+  bridge; the tunnel client's sockets are also protected.
+- Desktop: FFI binds the stage 2 exports lazily; DoH/DoT needs a current
+  `libdnstt`.
+- Slipstream gets `host:port` from the spec (ports and IPv6 now work) and
+  refuses DoH/DoT servers with a clear message until stage 4.
+- Tests: resolver spec table, JSON compatibility and imports (Dart), relay
+  tests (Dart, Kotlin); debug APK builds.
+- Not yet checked live (the user has no test server available for now): DNSTT
+  over DoH and DoT in VPN and proxy modes, VPN-mode device DNS through the
+  bridge, desktop.
 
 ## Next steps
 
-0. **First release, for installing on the phone** (the user's top priority:
-   a working app on the phone comes first). Proposed to the user, waiting for
-   a yes and the version:
+0. **First release, for installing on the phone.** The user postponed it and
+   will say when. The plan, as proposed:
    - bump `version:` in `pubspec.yaml` from `2.2.0+5` (same as upstream) to
      `2.3.0+6`; the APK version comes from there, not from the tag, and
      Android refuses a lower build number than the installed one;
@@ -220,44 +244,32 @@ Solution:
    (covers 3.1, 3.3, 3.5 and 3.6). Order: build the Go library in CI, DoH/DoT in
    Go, then in the app for DNSTT, then Slipstream through a local UDP→DoH/DoT
    bridge, then tun2socks (hev-socks5-tunnel, fake-IP DNS, IPv6), then an
-   optional tunnel-DNS mode. Stages 1 (Go library in CI) and 2 (DoH/DoT in
-   the Go library) are done; next is stage 3, DoH/DoT for DNSTT in the app.
+   optional tunnel-DNS mode. Stages 1 (Go library in CI), 2 (DoH/DoT in the
+   Go library) and 3 (DoH/DoT for DNSTT in the app) are done; next is stage 4,
+   Slipstream over DoH/DoT.
 
-## Resume here: stage 3 (DoH/DoT for DNSTT in the app)
+## Resume here: stage 4 (DoH/DoT for Slipstream)
 
-The next session starts stage 3 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md`
-(section 6, "Stage 3"; design in sections 3.1, 3.5–3.7). First write its
-step-by-step plan as `docs/STAGE3_APP_DOH_DOT.md`, as for stages 1 and 2, then
-implement. Starting points found while doing stage 2:
+The next session starts stage 4 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md`
+(section 6, "Stage 4"; design in section 3.4). First write its plan as
+`docs/STAGE4_SLIPSTREAM_DOH_DOT.md`, then implement. Starting points:
 
-- Go API to use (already in the AAR, Java signatures from `javap`):
-  `Mobile.newClient(spec, domain, key, listenAddr)` (throws on an invalid
-  spec), `DnsttClient.setBootstrap(String)`, `setTLSFingerprint(String)`,
-  `setSocketProtector(SocketProtector)` where `SocketProtector.protect(long)`
-  returns boolean, `Mobile.resolverKind(String)`, `udpResolverAddr(String)`,
-  `startBridge(String, String, String)` returning `Bridge` (`port()` is a
-  long, `stop()`), `probeResolver(spec, bootstrap, fingerprint, domain,
-  long timeoutMs)` returning a long and throwing on failure. Desktop exports:
-  see `CLAUDE.md`, "mobile.go and the client package"; look them up lazily
-  with `providesSymbol`, as `dnstt_test_dns_server_auth` is.
-- Kotlin call sites of `Mobile.newClient` (each with `start()` in the same
-  error handling): `DnsttVpnService.kt` (VPN), `DnsttProxyService.kt`
-  (proxy), `MainActivity.kt` (two SSH paths and the DNS server test).
-- Dart: `vpn_service.dart` passes `dnsServer` through the platform channel
-  (several methods; default `'8.8.8.8'`); `dnstt_ffi_service.dart` binds the
-  desktop library; `dnstt_service.dart` `_testDnsServerViaDnsQuery` is the UDP
-  probe (IPv4 only, port 53), to be routed to `probeResolver` for DoH/DoT.
-- IPv4-only validation to replace with a Dart resolver-spec parser (same cases
-  as `go_src/client/resolver_test.go`): the add dialog regex in
-  `dns_management_screen.dart`, `_isValidIp` in
-  `config_import_export_service.dart`.
-- Slipstream hard-codes `:53` (`SlipstreamBridge.kt`, twice in
-  `slipstream_service.dart`); that is stage 4, but stage 3 must not break it
-  when a stored address is no longer a bare IPv4 (Slipstream should refuse
-  DoH/DoT specs until stage 4, or use `udpResolverAddr`).
-- The user still has to install a CI APK and check that DNSTT connects: since
-  stage 2 the Go client code is new (same behaviour over UDP, covered by the
-  end-to-end test, but not yet run on a phone). Worth asking at the start.
+- Android: `SlipstreamBridge.startClient` refuses non-UDP specs
+  (`Mobile.udpResolverAddr` returns ""). For DoH/DoT start
+  `Mobile.startBridge(spec, bootstrap, fingerprint)` and pass
+  `127.0.0.1:<port>`; stop the bridge with the subprocess. Callers:
+  `DnsttVpnService.startSlipstreamClient`, `SlipstreamProxyService`,
+  `MainActivity.testSlipstreamDnsServer`; Slipstream intents and the
+  `connectSlipstream*`/`testSlipstreamDnsServer` channel calls do not carry
+  `ResolverOptions` yet (DNSTT ones do).
+- Desktop: `SlipstreamService.resolverArg` returns null for DoH/DoT; bind
+  `dnstt_bridge_start`/`dnstt_bridge_stop` in `dnstt_ffi_service.dart`.
+- Dart refusals to remove: `VpnService.connectSlipstream` and
+  `connectSlipstreamProxy`, `DnsttService.testDnsServer` (Slipstream branch),
+  `SlipstreamService.udpOnlyMessage`.
+- In VPN mode, Slipstream and device DNS can share one bridge.
+- Live measurement in the plan (Slipstream over DoH vs UDP, rate limits)
+  needs the user's server; the user will test later.
 
 ## Working notes
 
@@ -296,7 +308,7 @@ implement. Starting points found while doing stage 2:
   in `dnstt-server/e2e_test.go`). `go vet ./...` still fails on upstream
   tests in `go_src/noise`; vet the other packages by name.
 - Run tests (after `./scripts/build_aar.sh`):
-  - `flutter test test/socks5_auth_relay_test.dart`
+  - `flutter test test/socks5_auth_relay_test.dart test/resolver_spec_test.dart test/dns_server_import_test.dart`
   - `cd android && ./gradlew :app:testDebugUnitTest --tests 'xyz.dnstt.app.Socks5AuthRelayTest'`
   - `flutter build apk --debug --target-platform android-arm64`
   - `cd go_src && go vet ./desktop`

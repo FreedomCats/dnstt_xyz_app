@@ -2,6 +2,7 @@ package xyz.dnstt.app
 
 import android.content.Context
 import android.util.Log
+import mobile.Mobile
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -48,7 +49,8 @@ class SlipstreamBridge {
      * Start the slipstream-client subprocess.
      *
      * @param domain Tunnel domain (e.g., "tunnel.example.com")
-     * @param dnsServer DNS server address used as resolver (from DNS server list)
+     * @param dnsServer resolver spec from the DNS server list; must be plain UDP
+     *   (slipstream-client does not speak DoH/DoT)
      * @param congestionControl "bbr" or "dcubic" (default "dcubic")
      * @param keepAliveInterval Keep-alive interval in ms (default 400)
      * @param port Local TCP listen port
@@ -78,13 +80,20 @@ class SlipstreamBridge {
 
         lastError = null
 
+        // "host:port" for a UDP resolver spec, "" for DoH/DoT or an invalid spec
+        val resolver = Mobile.udpResolverAddr(dnsServer)
+        if (resolver.isEmpty()) {
+            lastError = "Slipstream supports only plain UDP DNS servers for now"
+            return false
+        }
+
         return try {
             val args = mutableListOf(
                 binary,
                 "--tcp-listen-port", port.toString(),
                 "--tcp-listen-host", host,
                 "--domain", domain,
-                "--resolver", "$dnsServer:53",
+                "--resolver", resolver,
                 "--congestion-control", congestionControl,
                 "--keep-alive-interval", keepAliveInterval.toString()
             )

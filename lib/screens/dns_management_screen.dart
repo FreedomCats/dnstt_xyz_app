@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import '../providers/app_state.dart';
 import '../models/dns_server.dart';
+import '../models/resolver_spec.dart';
 import '../services/vpn_service.dart';
 import '../services/config_import_export_service.dart';
 import '../services/bundled_dns_service.dart';
@@ -361,12 +362,20 @@ class _DnsManagementScreenState extends State<DnsManagementScreen> {
                         ),
                         title: Row(
                           children: [
-                            Text(
-                              server.address,
-                              style: const TextStyle(
-                                fontFamily: 'monospace',
-                                fontWeight: FontWeight.w500,
-                                fontSize: 14,
+                            if (server.isEncrypted) ...[
+                              _buildKindBadge(server),
+                              const SizedBox(width: 6),
+                            ],
+                            Flexible(
+                              child: Text(
+                                server.address,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 14,
+                                ),
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -439,6 +448,25 @@ class _DnsManagementScreenState extends State<DnsManagementScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// "DoH" or "DoT" label for encrypted resolvers.
+  Widget _buildKindBadge(DnsServer server) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.blue.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        server.kind.label,
+        style: const TextStyle(
+          fontSize: 10,
+          color: Colors.blue,
+          fontWeight: FontWeight.bold,
+        ),
       ),
     );
   }
@@ -865,10 +893,12 @@ class _DnsManagementScreenState extends State<DnsManagementScreen> {
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Center(
-                                child: Text(
-                                  BundledDnsService.getFlagEmoji(country.countryCode),
-                                  style: const TextStyle(fontSize: 24),
-                                ),
+                                child: country.isEncrypted
+                                    ? const Icon(Icons.lock, color: Colors.blue)
+                                    : Text(
+                                        BundledDnsService.getFlagEmoji(country.countryCode),
+                                        style: const TextStyle(fontSize: 24),
+                                      ),
                               ),
                             ),
                             title: Text(
@@ -952,42 +982,58 @@ class _DnsManagementScreenState extends State<DnsManagementScreen> {
   }
 
   void _showAddManuallyDialog(BuildContext context) {
-    final ipController = TextEditingController();
+    final addressController = TextEditingController();
+    final bootstrapController = TextEditingController();
     final nameController = TextEditingController();
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Add DNS Server'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: ipController,
-              decoration: const InputDecoration(
-                labelText: 'IP Address *',
-                hintText: 'e.g., 8.8.8.8',
-                border: OutlineInputBorder(),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: addressController,
+                decoration: const InputDecoration(
+                  labelText: 'Address *',
+                  hintText: 'e.g., 8.8.8.8 or https://dns.google/dns-query',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.url,
+                autocorrect: false,
               ),
-              keyboardType: TextInputType.text,
-              autocorrect: false,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: 'Name (optional)',
-                hintText: 'e.g., Google DNS',
-                border: OutlineInputBorder(),
+              const SizedBox(height: 12),
+              TextField(
+                controller: bootstrapController,
+                decoration: const InputDecoration(
+                  labelText: 'Bootstrap IP (DoH/DoT, optional)',
+                  hintText: 'e.g., 8.8.8.8',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.url,
+                autocorrect: false,
               ),
-              keyboardType: TextInputType.text,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'IP address is required. Name is optional.',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-            ),
-          ],
+              const SizedBox(height: 12),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Name (optional)',
+                  hintText: 'e.g., Google DNS',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.text,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Plain DNS: IP address, IP:port or host name. '
+                'DNS over HTTPS: https://host/path. DNS over TLS: tls://host[:port]. '
+                'The bootstrap IP is dialed instead of looking up the DoH/DoT host name.',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -996,28 +1042,48 @@ class _DnsManagementScreenState extends State<DnsManagementScreen> {
           ),
           ElevatedButton(
             onPressed: () {
-              final ip = ipController.text.trim();
+              final address = addressController.text.trim();
+              final bootstrap = bootstrapController.text.trim();
               final name = nameController.text.trim();
 
-              if (ip.isEmpty) {
+              void showError(String message) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter an IP address')),
+                  SnackBar(content: Text(message)),
                 );
+              }
+
+              if (address.isEmpty) {
+                showError('Please enter an address');
                 return;
               }
 
-              // Basic IP validation
-              final ipRegex = RegExp(r'^(\d{1,3}\.){3}\d{1,3}$');
-              if (!ipRegex.hasMatch(ip)) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Invalid IP address format')),
-                );
+              final spec = ResolverSpec.tryParse(address);
+              if (spec == null) {
+                showError('Invalid address: use an IP address, IP:port, https://… or tls://…');
                 return;
+              }
+
+              String? normalizedBootstrap;
+              if (bootstrap.isNotEmpty) {
+                if (spec.kind == ResolverKind.udp) {
+                  showError('A bootstrap IP is only used with DoH and DoT servers');
+                  return;
+                }
+                normalizedBootstrap = ResolverSpec.normalizeBootstrap(bootstrap);
+                if (normalizedBootstrap == null) {
+                  showError('Invalid bootstrap IP address');
+                  return;
+                }
               }
 
               final state = context.read<AppState>();
+              if (state.dnsServers.any((s) => sameResolver(s.address, spec.toString()))) {
+                showError('This DNS server is already in the list');
+                return;
+              }
               state.addDnsServer(DnsServer(
-                address: ip,
+                address: spec.toString(),
+                bootstrap: normalizedBootstrap,
                 name: name.isNotEmpty ? name : null,
               ));
 

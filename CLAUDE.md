@@ -89,6 +89,7 @@ dnstt_app/
 │       │       ├── MainActivity.kt      # Flutter platform channel bridge
 │       │       ├── DnsttVpnService.kt   # Android VPN service + packet handling
 │       │       ├── SlipstreamBridge.kt  # Slipstream subprocess manager (Android)
+│       │       ├── ResolverOptions.kt   # DoH/DoT bootstrap and TLS fingerprint
 │       │       ├── SlipstreamProxyService.kt  # Slipstream proxy foreground service
 │       │       ├── TcpConnection.kt     # TCP state machine for VPN
 │       │       └── Socks5Client.kt      # SOCKS5 proxy client
@@ -128,6 +129,7 @@ dnstt_app/
 │   │   └── dnstt_service.dart           # Tunnel testing (DNSTT + Slipstream)
 │   └── models/
 │       ├── dns_server.dart              # DNS server model
+│       ├── resolver_spec.dart           # Resolver spec parser (UDP / DoH / DoT)
 │       └── dnstt_config.dart            # Config model (DNSTT + Slipstream)
 ├── macos/
 │   └── Runner/
@@ -354,7 +356,8 @@ The Android VPN service that:
 - Excludes the app itself from VPN routing (so dnstt UDP packets bypass VPN)
 - Processes IP packets from TUN
 - Routes TCP through SOCKS5 proxy (DNSTT or Slipstream tunnel)
-- Handles DNS queries directly
+- Handles device DNS queries: the TUN announces the virtual DNS server `198.18.0.2`; queries go to
+  the resolver over UDP, or for a DoH/DoT resolver through a local bridge (`Mobile.startBridge`)
 - Processes SYN packets asynchronously (thread pool) to avoid blocking the VPN loop during Slipstream's slower SOCKS5 handshake through the DNS tunnel
 
 ### SlipstreamBridge.kt
@@ -658,6 +661,28 @@ The app supports two transport types:
 - No public key needed (QUIC/TLS handles encryption)
 
 DNS servers from the DNS server list are used for both protocols. For DNSTT, the DNS server carries the tunnel traffic. For Slipstream, the DNS server is used as the `--resolver` argument.
+
+### DNS Servers
+
+`DnsServer.address` is a resolver spec (`lib/models/resolver_spec.dart`, a port of the Go
+parser in `go_src/client`, tested against the same cases), stored in short canonical form
+without the default port:
+
+| Address | Transport |
+|---------|-----------|
+| `192.0.2.1`, `192.0.2.1:5353`, `2001:db8::1`, `[2001:db8::1]:5353`, `dns.example` | UDP (port 53) |
+| `https://dns.example/dns-query` | DoH (port 443) |
+| `tls://dns.example` | DoT (port 853) |
+
+- **Bootstrap** (`DnsServer.bootstrap`, optional, DoH/DoT only): IP address dialed instead of
+  looking up the resolver's host name.
+- **TLS fingerprint** (global setting `tls_fingerprint`): uTLS fingerprint for DoH/DoT; empty
+  for the library default, `none` for Go's own TLS.
+- The platform channel passes `dnsServer` (the spec), `dnsBootstrap` and `tlsFingerprint`;
+  Kotlin wraps the last two in `ResolverOptions`.
+- DNSTT works over all three transports. Slipstream gets `host:port` of a UDP resolver
+  (`Mobile.udpResolverAddr`, `SlipstreamService.resolverArg`) and refuses DoH/DoT servers.
+- The bundled list `assets/dns/encrypted.json` holds well-known public DoH/DoT resolvers.
 
 ---
 

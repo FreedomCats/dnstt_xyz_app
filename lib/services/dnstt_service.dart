@@ -237,9 +237,13 @@ class DnsttService {
     bool gso = false,
     String? socksUsername,
     String? socksPassword,
+    String tlsFingerprint = '',
   }) async {
     // Slipstream transport
     if (transportType == TransportType.slipstream && tunnelDomain != null) {
+      if (server.isEncrypted) {
+        return DnsttTestResult(server: server, result: TestResult.failed, message: SlipstreamService.udpOnlyMessage);
+      }
       return _testDnsServerViaSlipstream(
         server,
         tunnelDomain: tunnelDomain,
@@ -263,10 +267,19 @@ class DnsttService {
         timeout: timeout,
         socksUsername: socksUsername,
         socksPassword: socksPassword,
+        tlsFingerprint: tlsFingerprint,
       );
     }
 
-    // Fallback to DNS query test when no config
+    // Fallback to DNS query test when no config. It sends plain UDP; a
+    // DoH/DoT server is tested through the tunnel, which needs a config.
+    if (server.isEncrypted) {
+      return DnsttTestResult(
+        server: server,
+        result: TestResult.failed,
+        message: 'Select a config to test ${server.kind.label} servers',
+      );
+    }
     return _testDnsServerViaDnsQuery(server, tunnelDomain: tunnelDomain, timeout: timeout);
   }
 
@@ -375,6 +388,7 @@ class DnsttService {
     required Duration timeout,
     String? socksUsername,
     String? socksPassword,
+    String tlsFingerprint = '',
   }) async {
     // On desktop, run the FFI test in a separate isolate to avoid blocking UI
     if (isDesktopPlatform) {
@@ -386,6 +400,7 @@ class DnsttService {
         timeoutMs: timeout.inMilliseconds,
         socksUsername: socksUsername,
         socksPassword: socksPassword,
+        tlsFingerprint: tlsFingerprint,
       );
     }
 
@@ -397,6 +412,8 @@ class DnsttService {
 
       final result = await vpnService.testDnsServer(
         dnsServer: server.address,
+        dnsBootstrap: server.bootstrap,
+        tlsFingerprint: tlsFingerprint,
         tunnelDomain: tunnelDomain,
         publicKey: publicKey,
         testUrl: testUrl,
@@ -447,11 +464,14 @@ class DnsttService {
     required int timeoutMs,
     String? socksUsername,
     String? socksPassword,
+    String tlsFingerprint = '',
   }) async {
     try {
       // Use compute to run in a separate isolate
       final result = await compute(_runFfiTest, {
         'dnsServer': server.address,
+        'dnsBootstrap': server.bootstrap,
+        'tlsFingerprint': tlsFingerprint,
         'tunnelDomain': tunnelDomain,
         'publicKey': publicKey,
         'testUrl': testUrl,
@@ -662,6 +682,7 @@ class DnsttService {
     bool gso = false,
     String? socksUsername,
     String? socksPassword,
+    String tlsFingerprint = '',
   }) async {
     final queue = List<DnsServer>.from(servers);
 
@@ -691,6 +712,7 @@ class DnsttService {
           gso: gso,
           socksUsername: socksUsername,
           socksPassword: socksPassword,
+          tlsFingerprint: tlsFingerprint,
         );
 
         // Call onResult immediately after each test
@@ -723,6 +745,7 @@ class DnsttService {
           gso: gso,
           socksUsername: socksUsername,
           socksPassword: socksPassword,
+          tlsFingerprint: tlsFingerprint,
         ));
       }
 
@@ -787,6 +810,8 @@ class DnsttService {
 /// This must be a top-level function for compute() to work
 int _runFfiTest(Map<String, dynamic> params) {
   final dnsServer = params['dnsServer'] as String;
+  final dnsBootstrap = params['dnsBootstrap'] as String?;
+  final tlsFingerprint = params['tlsFingerprint'] as String;
   final tunnelDomain = params['tunnelDomain'] as String;
   final publicKey = params['publicKey'] as String;
   final testUrl = params['testUrl'] as String;
@@ -804,6 +829,8 @@ int _runFfiTest(Map<String, dynamic> params) {
     // Run the test
     return ffi.testDnsServer(
       dnsServer: dnsServer,
+      dnsBootstrap: dnsBootstrap,
+      tlsFingerprint: tlsFingerprint,
       tunnelDomain: tunnelDomain,
       publicKey: publicKey,
       testUrl: testUrl,

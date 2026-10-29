@@ -1,8 +1,16 @@
 import 'package:uuid/uuid.dart';
+import 'resolver_spec.dart';
 
 class DnsServer {
   final String id;
+
+  /// Resolver spec (see [ResolverSpec]): an IP address for plain UDP, or a
+  /// `https://` (DoH) or `tls://` (DoT) URL.
   final String address;
+
+  /// IP address to connect to instead of resolving the host name of a DoH or
+  /// DoT resolver (avoids a plain DNS lookup); null to resolve it.
+  final String? bootstrap;
   final String? name;
   final String? region;
   final String? provider;
@@ -14,6 +22,7 @@ class DnsServer {
   DnsServer({
     String? id,
     required this.address,
+    this.bootstrap,
     this.name,
     this.region,
     this.provider,
@@ -23,9 +32,16 @@ class DnsServer {
     this.lastTestMessage,
   }) : id = id ?? const Uuid().v4();
 
+  /// Transport of the resolver; entries that do not parse count as UDP, as
+  /// they did before resolver specs.
+  ResolverKind get kind => ResolverSpec.kindOf(address) ?? ResolverKind.udp;
+
+  bool get isEncrypted => kind != ResolverKind.udp;
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'address': address,
+        if (bootstrap != null) 'bootstrap': bootstrap,
         'name': name,
         'region': region,
         'provider': provider,
@@ -38,6 +54,7 @@ class DnsServer {
   factory DnsServer.fromJson(Map<String, dynamic> json) => DnsServer(
         id: json['id'],
         address: json['address'],
+        bootstrap: json['bootstrap'],
         name: json['name'],
         region: json['region'],
         provider: json['provider'],

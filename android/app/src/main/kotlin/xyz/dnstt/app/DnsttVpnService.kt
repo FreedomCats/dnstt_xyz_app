@@ -15,10 +15,14 @@ import androidx.core.app.NotificationCompat
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
 import java.net.DatagramPacket
@@ -34,6 +38,10 @@ class DnsttVpnService : VpnService() {
 
         const val ACTION_CONNECT = "xyz.dnstt.app.CONNECT"
         const val ACTION_DISCONNECT = "xyz.dnstt.app.DISCONNECT"
+
+        // DNS server the TUN announces to the device (benchmarking range 198.18.0.0/15,
+        // never routed on the Internet). Queries to it are answered through dnsTarget.
+        const val VIRTUAL_DNS_SERVER = "198.18.0.2"
 
         const val EXTRA_PROXY_HOST = "proxy_host"
         const val EXTRA_PROXY_PORT = "proxy_port"
@@ -56,6 +64,7 @@ class DnsttVpnService : VpnService() {
     private var proxyHost: String = "127.0.0.1"
     private var proxyPort: Int = 7000
     private var dnsServer: String = "8.8.8.8"
+    private var resolverOptions = ResolverOptions()
     private var tunnelDomain: String = ""
     private var publicKey: String = ""
     private var isSshMode: Boolean = false
@@ -89,6 +98,12 @@ class DnsttVpnService : VpnService() {
 
     // Go-based dnstt client from gomobile library
     private var dnsttClient: mobile.DnsttClient? = null
+
+    // Where device DNS queries go: the resolver itself for plain UDP, or dnsBridge
+    // (local UDP to DoH/DoT) for encrypted resolvers
+    private var dnsTarget: InetSocketAddress? = null
+    private var dnsBridge: mobile.Bridge? = null
+    private var dnsExecutor = newDnsExecutor()
 
     // Authenticates to the upstream SOCKS5 proxy when credentials are configured
     private var socksRelay: Socks5AuthRelay? = null
@@ -134,6 +149,7 @@ class DnsttVpnService : VpnService() {
                 proxyHost = intent.getStringExtra(EXTRA_PROXY_HOST) ?: "127.0.0.1"
                 proxyPort = intent.getIntExtra(EXTRA_PROXY_PORT, 7000)
                 dnsServer = intent.getStringExtra(EXTRA_DNS_SERVER) ?: "8.8.8.8"
+                resolverOptions = ResolverOptions.from(intent)
                 tunnelDomain = intent.getStringExtra(EXTRA_TUNNEL_DOMAIN) ?: ""
                 publicKey = intent.getStringExtra(EXTRA_PUBLIC_KEY) ?: ""
                 isSshMode = intent.getBooleanExtra(EXTRA_SSH_MODE, false)
@@ -183,6 +199,15 @@ class DnsttVpnService : VpnService() {
                 // Create the Go dnstt client
                 val listenAddr = "$host:$port"
                 dnsttClient = Mobile.newClient(dnsServer, tunnelDomain, publicKey, listenAddr)
+                dnsttClient?.let { client ->
+                    resolverOptions.applyTo(client)
+                    // The app is excluded from the VPN; protecting the tunnel's sockets
+                    // as well keeps them off the TUN should the exclusion not apply.
+                    client.setSocketProtector { fd ->
+                        if (!protect(fd.toInt())) Log.w(TAG, "Failed to protect tunnel socket")
+                        true
+                    }
+                }
 
                 // Start the client (this may block while establishing connection)
                 dnsttClient?.start()
@@ -470,7 +495,7 @@ class DnsttVpnService : VpnService() {
                 .setSession("DNSTT Tunnel")
                 .addAddress("10.0.0.2", 32)
                 .addRoute("0.0.0.0", 0)
-                .addDnsServer(dnsServer)
+                .addDnsServer(VIRTUAL_DNS_SERVER)
                 .setMtu(1500)
                 .setBlocking(true)
 
@@ -491,6 +516,18 @@ class DnsttVpnService : VpnService() {
                 return
             }
             Log.d(TAG, "VPN interface established, app is excluded from routing")
+
+            if (!startDnsForwarding()) {
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    stateCallback?.invoke("error")
+                }
+                vpnInterface?.close()
+                vpnInterface = null
+                releaseWakeLock()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                return
+            }
 
             // Wait for VPN routing to be fully active
             Thread.sleep(500)
@@ -737,32 +774,23 @@ class DnsttVpnService : VpnService() {
 
         Log.d(TAG, "DNS query from ${ipHeader.sourceIp}:${udpHeader.sourcePort} to ${ipHeader.destinationIp}:53")
 
-        // Forward DNS query to the actual DNS server
-        Thread {
+        val target = dnsTarget ?: return
+        // A full queue drops the query; the device's resolver retries
+        dnsExecutor.execute {
             try {
                 // Create a protected UDP socket to bypass VPN
-                val dnsSocket = DatagramSocket()
-                protect(dnsSocket)
+                val responseData = DatagramSocket().use { dnsSocket ->
+                    protect(dnsSocket)
+                    dnsSocket.soTimeout = 5000 // 5 second timeout
+                    dnsSocket.send(DatagramPacket(udpHeader.payload, udpHeader.payload.size, target))
 
-                // Send DNS query to DNS server
-                val dnsServerAddr = InetAddress.getByName(dnsServer)
-                val queryPacket = DatagramPacket(
-                    udpHeader.payload,
-                    udpHeader.payload.size,
-                    dnsServerAddr,
-                    53
-                )
-                dnsSocket.soTimeout = 5000 // 5 second timeout
-                dnsSocket.send(queryPacket)
-
-                // Receive DNS response
-                val responseBuffer = ByteArray(4096)
-                val responsePacket = DatagramPacket(responseBuffer, responseBuffer.size)
-                dnsSocket.receive(responsePacket)
-                dnsSocket.close()
-
-                val responseData = responseBuffer.copyOf(responsePacket.length)
-                Log.d(TAG, "DNS response received: ${responsePacket.length} bytes")
+                    // Receive DNS response
+                    val responseBuffer = ByteArray(4096)
+                    val responsePacket = DatagramPacket(responseBuffer, responseBuffer.size)
+                    dnsSocket.receive(responsePacket)
+                    responseBuffer.copyOf(responsePacket.length)
+                }
+                Log.d(TAG, "DNS response received: ${responseData.size} bytes")
 
                 // Build response packet
                 val responseUdp = UDPHeader(
@@ -798,7 +826,58 @@ class DnsttVpnService : VpnService() {
             } catch (e: Exception) {
                 Log.e(TAG, "DNS forwarding failed", e)
             }
-        }.start()
+        }
+    }
+
+    private fun newDnsExecutor() = ThreadPoolExecutor(
+        4, 4, 30, TimeUnit.SECONDS, ArrayBlockingQueue(64), ThreadPoolExecutor.DiscardPolicy()
+    ).apply { allowCoreThreadTimeOut(true) }
+
+    /**
+     * Chooses where device DNS queries go: the resolver's own address for a plain UDP
+     * resolver, or a local bridge that forwards them over DoH/DoT (plain UDP to an
+     * encrypted resolver's address would expose every query). Replaced by tun2socks
+     * DNS handling later.
+     */
+    private fun startDnsForwarding(): Boolean {
+        stopDnsForwarding()
+        return try {
+            when (Mobile.resolverKind(dnsServer)) {
+                "udp" -> {
+                    val addr = Mobile.udpResolverAddr(dnsServer)
+                    val colon = addr.lastIndexOf(':')
+                    val host = addr.substring(0, colon).removePrefix("[").removeSuffix("]")
+                    dnsTarget = InetSocketAddress(host, addr.substring(colon + 1).toInt())
+                }
+                "doh", "dot" -> {
+                    val bridge = Mobile.startBridge(dnsServer, resolverOptions.bootstrap, resolverOptions.tlsFingerprint)
+                    dnsBridge = bridge
+                    dnsTarget = InetSocketAddress(InetAddress.getLoopbackAddress(), bridge.port().toInt())
+                }
+                else -> {
+                    Log.e(TAG, "Invalid DNS server: $dnsServer")
+                    return false
+                }
+            }
+            Log.d(TAG, "Device DNS goes to $dnsTarget")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to set up DNS forwarding for $dnsServer", e)
+            stopDnsForwarding()
+            false
+        }
+    }
+
+    private fun stopDnsForwarding() {
+        dnsTarget = null
+        dnsBridge?.let { bridge ->
+            try {
+                bridge.stop()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping DNS bridge", e)
+            }
+        }
+        dnsBridge = null
     }
 
     private fun disconnect() {
@@ -815,6 +894,9 @@ class DnsttVpnService : VpnService() {
         pendingConnections.clear()
         synExecutor.shutdownNow()
         synExecutor = Executors.newFixedThreadPool(16)
+        dnsExecutor.shutdownNow()
+        dnsExecutor = newDnsExecutor()
+        stopDnsForwarding()
 
         tcpConnections.values.forEach { it.close() }
         tcpConnections.clear()

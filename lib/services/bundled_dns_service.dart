@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/services.dart';
 import '../models/dns_server.dart';
+import 'config_import_export_service.dart';
 
 class DnsCountryData {
   final String country;
@@ -15,15 +16,25 @@ class DnsCountryData {
     required this.servers,
   });
 
+  /// The group of DoH and DoT resolvers rather than a country.
+  bool get isEncrypted => countryCode == 'encrypted';
+
   factory DnsCountryData.fromJson(Map<String, dynamic> json) {
-    final servers = (json['servers'] as List).map((s) {
-      return DnsServer(
-        address: s['ip'] as String,
+    final servers = <DnsServer>[];
+    for (final s in json['servers'] as List) {
+      final server = ConfigImportExportService.dnsServerFromEntry(
+        s['ip'] as String,
+        bootstrap: s['bootstrap'] as String?,
+      );
+      if (server == null) continue;
+      servers.add(DnsServer(
+        address: server.address,
+        bootstrap: server.bootstrap,
         name: s['name'] as String?,
         region: json['country'] as String?,
         provider: json['countryCode'] as String?,
-      );
-    }).toList();
+      ));
+    }
 
     return DnsCountryData(
       country: json['country'] as String? ?? 'Unknown',
@@ -43,7 +54,7 @@ class BundledDnsService {
 
   /// Get list of available country files
   static const List<String> _countryFiles = [
-    'global', 'ae', 'af', 'bd', 'cn', 'co', 'id', 'ir', 'kw', 'pk', 'qa', 'ru', 'sy', 'tr', 'ug', 'uz'
+    'encrypted', 'global', 'ae', 'af', 'bd', 'cn', 'co', 'id', 'ir', 'kw', 'pk', 'qa', 'ru', 'sy', 'tr', 'ug', 'uz'
   ];
 
   /// Country code to flag emoji mapping
@@ -72,8 +83,11 @@ class BundledDnsService {
       }
     }
 
-    // Sort by country name
-    countries.sort((a, b) => a.country.compareTo(b.country));
+    // Sort by country name, the encrypted (DoH/DoT) group first
+    countries.sort((a, b) {
+      if (a.isEncrypted != b.isEncrypted) return a.isEncrypted ? -1 : 1;
+      return a.country.compareTo(b.country);
+    });
     _cachedData = countries;
     return countries;
   }

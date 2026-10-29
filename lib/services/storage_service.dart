@@ -12,6 +12,7 @@ class StorageService {
   static const String _proxyPortKey = 'proxy_port';
   static const String _connectionModeKey = 'connection_mode';
   static const String _useAutoDnsKey = 'use_auto_dns';
+  static const String _tlsFingerprintKey = 'tls_fingerprint';
   static const int defaultProxyPort = 1080;
 
   final SharedPreferences _prefs;
@@ -150,5 +151,12 @@ class StorageService {
 
   Future<void> setUseAutoDns(bool value) async {
     await _prefs.setBool(_useAutoDnsKey, value);
+  }
+
+  // TLS fingerprint for DoH/DoT resolvers ('' = library default)
+  Future<String> getTlsFingerprint() async => _prefs.getString(_tlsFingerprintKey) ?? '';
+
+  Future<void> setTlsFingerprint(String value) async {
+    await _prefs.setString(_tlsFingerprintKey, value);
   }
 }

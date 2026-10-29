@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/dnstt_config.dart';
 import '../models/dns_server.dart';
+import '../models/resolver_spec.dart';
 
 class ConfigImportExportService {
   /// Import DNSTT configs from a JSON URL
@@ -219,11 +220,10 @@ class ConfigImportExportService {
               // Extract DNS IP from user field (format: username@dns_ip)
               final parts = user.split('@');
               if (parts.length == 2) {
-                final dnsIp = parts[1];
-                // Validate IP format
-                if (_isValidIp(dnsIp)) {
+                final spec = ResolverSpec.tryParse(parts[1]);
+                if (spec != null) {
                   dnsServers.add(DnsServer(
-                    address: dnsIp,
+                    address: spec.toString(),
                     name: '$name DNS',
                     provider: 'dnstt.xyz',
                   ));
@@ -243,19 +243,6 @@ class ConfigImportExportService {
     }
   }
 
-  /// Simple IP validation
-  static bool _isValidIp(String ip) {
-    final parts = ip.split('.');
-    if (parts.length != 4) return false;
-
-    for (final part in parts) {
-      final num = int.tryParse(part);
-      if (num == null || num < 0 || num > 255) return false;
-    }
-
-    return true;
-  }
-
   /// Import DNS servers from a JSON string
   static List<DnsServer> importDnsServersFromJson(String jsonString) {
     try {
@@ -272,6 +259,7 @@ class ConfigImportExportService {
       'version': '1.0',
       'servers': servers.map((s) => {
         'ip': s.address,
+        if (s.bootstrap != null) 'bootstrap': s.bootstrap,
         if (s.name != null) 'name': s.name,
         if (s.provider != null) 'provider': s.provider,
         if (s.region != null) 'region': s.region,
@@ -309,7 +297,9 @@ class ConfigImportExportService {
     }
   }
 
-  /// Parse DNS server list from JSON
+  /// Parse DNS server list from JSON. Each entry has the resolver in "ip" or
+  /// "address" (an IP address, or a DoH/DoT URL, see [ResolverSpec]) and an
+  /// optional "bootstrap" IP address; invalid entries are skipped.
   static List<DnsServer> _parseDnsServerList(dynamic jsonData) {
     final servers = <DnsServer>[];
     List serversList;
@@ -330,11 +320,15 @@ class ConfigImportExportService {
       if (item is! Map<String, dynamic>) continue;
 
       try {
-        final ip = item['ip']?.toString() ?? item['address']?.toString() ?? '';
-        if (ip.isEmpty || !_isValidIp(ip)) continue;
+        final server = dnsServerFromEntry(
+          item['ip']?.toString() ?? item['address']?.toString() ?? '',
+          bootstrap: item['bootstrap']?.toString(),
+        );
+        if (server == null) continue;
 
         servers.add(DnsServer(
-          address: ip,
+          address: server.address,
+          bootstrap: server.bootstrap,
           name: item['name']?.toString(),
           provider: item['provider']?.toString(),
           region: item['region']?.toString(),
@@ -346,5 +340,19 @@ class ConfigImportExportService {
     }
 
     return servers;
+  }
+
+  /// A DNS server from an imported resolver spec and bootstrap address, both
+  /// normalized; null if either is invalid. The bootstrap address is kept
+  /// only for DoH and DoT.
+  static DnsServer? dnsServerFromEntry(String address, {String? bootstrap}) {
+    final spec = ResolverSpec.tryParse(address);
+    if (spec == null) return null;
+    String? boot;
+    if (bootstrap != null && bootstrap.trim().isNotEmpty && spec.kind != ResolverKind.udp) {
+      boot = ResolverSpec.normalizeBootstrap(bootstrap);
+      if (boot == null) return null;
+    }
+    return DnsServer(address: spec.toString(), bootstrap: boot);
   }
 }

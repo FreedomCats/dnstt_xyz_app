@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../models/dns_server.dart';
 import '../models/dnstt_config.dart';
+import '../models/resolver_spec.dart';
 import '../services/storage_service.dart';
 import '../services/dnstt_service.dart';
 import '../services/vpn_service.dart';
@@ -29,6 +30,7 @@ class AppState extends ChangeNotifier {
   bool _useAutoDns = false;
   DnsServer? _autoDnsServer;
   String? _autoDnsError;
+  String _tlsFingerprint = '';
 
   List<DnsServer> get dnsServers => _dnsServers;
   List<DnsttConfig> get dnsttConfigs => _dnsttConfigs;
@@ -43,6 +45,9 @@ class AppState extends ChangeNotifier {
   String get testUrl => _testUrl;
   int get proxyPort => _proxyPort;
   String get connectionMode => _connectionMode;
+
+  /// uTLS fingerprint for DoH/DoT resolvers ('' = library default).
+  String get tlsFingerprint => _tlsFingerprint;
   int get testingProgress => _testingProgress;
   int get testingTotal => _testingTotal;
   int get testingWorking => _testingWorking;
@@ -76,6 +81,9 @@ class AppState extends ChangeNotifier {
     _proxyPort = await _storage!.getProxyPort();
     _connectionMode = await _storage!.getConnectionMode() ?? 'vpn';
 
+    _tlsFingerprint = await _storage!.getTlsFingerprint();
+    if (!tlsFingerprintChoices.containsKey(_tlsFingerprint)) _tlsFingerprint = '';
+
     _useAutoDns = await _storage!.getUseAutoDns();
     if (_useAutoDns) await _detectSystemDns();
 
@@ -99,8 +107,9 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Import DNS servers with deduplication based on IP address.
-  /// If a server with the same IP already exists, only update its name if changed.
+  /// Import DNS servers with deduplication based on the resolver address.
+  /// If a server with the same resolver already exists, only update its name
+  /// and bootstrap address if they changed.
   /// Returns the count of new servers added and updated servers.
   Future<({int added, int updated})> importDnsServers(List<DnsServer> servers) async {
     int added = 0;
@@ -108,18 +117,20 @@ class AppState extends ChangeNotifier {
     final newServers = <DnsServer>[];
 
     for (final server in servers) {
-      // Find existing server by IP address
-      final existingIndex = _dnsServers.indexWhere((s) => s.address == server.address);
+      // Find existing server by resolver address
+      final existingIndex = _dnsServers.indexWhere((s) => sameResolver(s.address, server.address));
 
       if (existingIndex >= 0) {
-        // Server exists - check if name needs update
+        // Server exists - check if name or bootstrap needs update
         final existing = _dnsServers[existingIndex];
-        if (server.name != null && server.name != existing.name) {
-          // Update name only
+        final nameChanged = server.name != null && server.name != existing.name;
+        final bootstrapChanged = server.bootstrap != null && server.bootstrap != existing.bootstrap;
+        if (nameChanged || bootstrapChanged) {
           _dnsServers[existingIndex] = DnsServer(
             id: existing.id,
             address: existing.address,
-            name: server.name,
+            bootstrap: server.bootstrap ?? existing.bootstrap,
+            name: server.name ?? existing.name,
             region: server.region ?? existing.region,
             provider: server.provider ?? existing.provider,
             isWorking: existing.isWorking,
@@ -311,6 +322,7 @@ class AppState extends ChangeNotifier {
           gso: _activeConfig?.gsoEnabled ?? false,
           socksUsername: _activeConfig?.upstreamSocksUsername,
           socksPassword: _activeConfig?.upstreamSocksPassword,
+          tlsFingerprint: _tlsFingerprint,
           onResult: (result) async {
             if (result.message == 'Cancelled') {
               _testingProgress++;
@@ -435,6 +447,7 @@ class AppState extends ChangeNotifier {
         gso: _activeConfig?.gsoEnabled ?? false,
         socksUsername: _activeConfig?.upstreamSocksUsername,
         socksPassword: _activeConfig?.upstreamSocksPassword,
+        tlsFingerprint: _tlsFingerprint,
       );
 
       await updateDnsServerStatus(
@@ -510,6 +523,13 @@ class AppState extends ChangeNotifier {
   Future<void> setProxyPort(int port) async {
     _proxyPort = port;
     await _storage!.setProxyPort(port);
+    notifyListeners();
+  }
+
+  // TLS fingerprint for DoH/DoT
+  Future<void> setTlsFingerprint(String value) async {
+    _tlsFingerprint = value;
+    await _storage!.setTlsFingerprint(value);
     notifyListeners();
   }
 

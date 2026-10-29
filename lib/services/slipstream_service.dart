@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:socks5_proxy/socks_client.dart';
+import '../models/resolver_spec.dart';
 
 /// Manages the slipstream-client binary as a subprocess on desktop platforms.
 /// Slipstream uses QUIC-over-DNS and is significantly faster than DNSTT.
@@ -10,6 +11,17 @@ import 'package:socks5_proxy/socks_client.dart';
 class SlipstreamService {
   static SlipstreamService? _instance;
   static SlipstreamService get instance => _instance ??= SlipstreamService._();
+
+  /// slipstream-client reaches its resolver over plain UDP only (DoH/DoT
+  /// through a local bridge is planned).
+  static const String udpOnlyMessage = 'Slipstream supports only plain UDP DNS servers for now';
+
+  /// The `--resolver` value for a resolver spec (`host:port`), or null for
+  /// DoH/DoT and invalid specs.
+  static String? resolverArg(String dnsServer) {
+    final spec = ResolverSpec.tryParse(dnsServer);
+    return spec?.kind == ResolverKind.udp ? spec!.address : null;
+  }
 
   SlipstreamService._();
 
@@ -74,7 +86,7 @@ class SlipstreamService {
   /// Start the slipstream-client subprocess.
   ///
   /// [domain] - Tunnel domain (e.g., "tunnel.example.com")
-  /// [dnsServerAddr] - DNS server address used as resolver (from DNS server list)
+  /// [dnsServerAddr] - DNS server (resolver spec) used as resolver; must be plain UDP
   /// [listenPort] - Local SOCKS5 proxy port (default 7000)
   /// [congestionControl] - "bbr" or "dcubic" (default "dcubic")
   /// [keepAliveInterval] - Keep-alive interval in ms (default 400)
@@ -100,11 +112,17 @@ class SlipstreamService {
 
     _lastError = null;
 
+    final resolver = resolverArg(dnsServerAddr);
+    if (resolver == null) {
+      _lastError = udpOnlyMessage;
+      return false;
+    }
+
     try {
       final args = [
         '--tcp-listen-port', listenPort.toString(),
         '--domain', domain,
-        '--resolver', '$dnsServerAddr:53',
+        '--resolver', resolver,
         '--congestion-control', congestionControl,
         '--keep-alive-interval', keepAliveInterval.toString(),
       ];
@@ -201,6 +219,12 @@ class SlipstreamService {
       return -1;
     }
 
+    final resolver = resolverArg(dnsServerAddr);
+    if (resolver == null) {
+      print('SlipstreamService.testServer: $udpOnlyMessage');
+      return -1;
+    }
+
     // Use a unique port for each test to avoid port conflicts
     final listenPort = _nextTestPort++;
     if (_nextTestPort > 19500) _nextTestPort = 18500;
@@ -210,7 +234,7 @@ class SlipstreamService {
       final args = [
         '--tcp-listen-port', listenPort.toString(),
         '--domain', domain,
-        '--resolver', '$dnsServerAddr:53',
+        '--resolver', resolver,
         '--congestion-control', congestionControl,
         '--keep-alive-interval', keepAliveInterval.toString(),
       ];

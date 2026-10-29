@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../providers/app_state.dart';
 import '../services/vpn_service.dart';
 import '../models/dnstt_config.dart';
+import '../models/resolver_spec.dart';
 import 'dns_management_screen.dart';
 import 'config_management_screen.dart';
 import 'donate_screen.dart';
@@ -678,65 +679,90 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Settings'),
         content: StatefulBuilder(
-          builder: (stfContext, setDialogState) => Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Local Proxy Port',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: portController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  hintText: '1080',
-                  helperText: 'Port for local SOCKS5 proxy (1-65535)',
-                  border: OutlineInputBorder(),
+          builder: (stfContext, setDialogState) => SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Local Proxy Port',
+                  style: TextStyle(fontWeight: FontWeight.bold),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Note: Change takes effect on next connection.',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[600],
+                const SizedBox(height: 8),
+                TextField(
+                  controller: portController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    hintText: '1080',
+                    helperText: 'Port for local SOCKS5 proxy (1-65535)',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-              ),
-              const Divider(),
-              const SizedBox(height: 8),
-              const Text(
-                'DNS Detection',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Use Local DNS (Beta)'),
-                subtitle: state.useAutoDns
-                    ? Text(
-                        state.activeDns != null
-                            ? 'Detected: ${state.activeDns!.address}'
-                            : state.autoDnsError ?? 'Detecting...',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: state.activeDns != null
-                              ? Colors.green
-                              : Colors.orange,
+                const SizedBox(height: 8),
+                Text(
+                  'Note: Change takes effect on next connection.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                  ),
+                ),
+                const Divider(),
+                const SizedBox(height: 8),
+                const Text(
+                  'DNS Detection',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Use Local DNS (Beta)'),
+                  subtitle: state.useAutoDns
+                      ? Text(
+                          state.activeDns != null
+                              ? 'Detected: ${state.activeDns!.address}'
+                              : state.autoDnsError ?? 'Detecting...',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: state.activeDns != null
+                                ? Colors.green
+                                : Colors.orange,
+                          ),
+                        )
+                      : const Text(
+                          'Use system DNS from active network',
+                          style: TextStyle(fontSize: 12),
                         ),
-                      )
-                    : const Text(
-                        'Use system DNS from active network',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                value: state.useAutoDns,
-                onChanged: (value) async {
-                  await state.setUseAutoDns(value);
-                  setDialogState(() {});
-                },
-              ),
-            ],
+                  value: state.useAutoDns,
+                  onChanged: (value) async {
+                    await state.setUseAutoDns(value);
+                    setDialogState(() {});
+                  },
+                ),
+                const Divider(),
+                const SizedBox(height: 8),
+                const Text(
+                  'DoH/DoT TLS Fingerprint',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: state.tlsFingerprint,
+                  decoration: const InputDecoration(
+                    helperText: 'Browser the TLS handshake imitates',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    for (final entry in tlsFingerprintChoices.entries)
+                      DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+                  ],
+                  onChanged: (value) async {
+                    if (value == null) return;
+                    await state.setTlsFingerprint(value);
+                    setDialogState(() {});
+                  },
+                ),
+              ],
+            ),
           ),
         ),
         actions: [
@@ -858,6 +884,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final config = state.activeConfig!;
       success = await _vpnService.connectSshTunnel(
         dnsServer: state.activeDns?.address ?? '8.8.8.8',
+        dnsBootstrap: state.activeDns?.bootstrap,
+        tlsFingerprint: state.tlsFingerprint,
         tunnelDomain: config.tunnelDomain,
         publicKey: config.publicKey,
         sshUsername: config.sshUsername!,
@@ -869,6 +897,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final config = state.activeConfig!;
       success = await _vpnService.connectSshTunnelVpn(
         dnsServer: state.activeDns?.address ?? '8.8.8.8',
+        dnsBootstrap: state.activeDns?.bootstrap,
+        tlsFingerprint: state.tlsFingerprint,
         tunnelDomain: config.tunnelDomain,
         publicKey: config.publicKey,
         sshUsername: config.sshUsername!,
@@ -904,6 +934,8 @@ class _HomeScreenState extends State<HomeScreen> {
       // Proxy-only mode (desktop or Android proxy mode)
       success = await _vpnService.connectProxy(
         dnsServer: state.activeDns?.address ?? '8.8.8.8',
+        dnsBootstrap: state.activeDns?.bootstrap,
+        tlsFingerprint: state.tlsFingerprint,
         tunnelDomain: state.activeConfig?.tunnelDomain,
         publicKey: state.activeConfig?.publicKey,
         proxyPort: state.proxyPort,
@@ -916,6 +948,8 @@ class _HomeScreenState extends State<HomeScreen> {
         proxyHost: '127.0.0.1',
         proxyPort: state.proxyPort,
         dnsServer: state.activeDns?.address ?? '8.8.8.8',
+        dnsBootstrap: state.activeDns?.bootstrap,
+        tlsFingerprint: state.tlsFingerprint,
         tunnelDomain: state.activeConfig?.tunnelDomain,
         publicKey: state.activeConfig?.publicKey,
         socksUsername: state.activeConfig?.upstreamSocksUsername,
