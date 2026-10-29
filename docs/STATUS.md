@@ -15,8 +15,11 @@ environment details, servers, credentials or other personal data.
   4. Translation of `AGENTS.md` and `docs/CODE_REVIEW.md` into English.
   5. Upstream SOCKS5 username/password auth (see below).
   6. Fixes to the SOCKS5 auth relay after review (see below).
-  7. CI builds and release signing (see below).
-- No pull requests are open yet. GitHub Actions are enabled in the fork.
+  7. CI builds and release signing (see below), then two CI fixes: generate
+     the Gradle wrapper before the Kotlin tests; actions moved to their
+     Node.js 24 versions.
+- No pull requests are open yet. GitHub Actions are enabled in the fork, and
+  the four signing secrets are set. No release has been made yet.
 
 ## Done: upstream SOCKS5 auth (upstream issue #15)
 
@@ -82,24 +85,42 @@ Solution:
   `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` environment variables, debug key
   otherwise; VCS metadata is no longer included in the APK. Key creation and
   the secrets are described in `CLAUDE.md` ("Signing Release Builds").
-- Checked locally: a release build signed with a test key from the environment
-  variables, and the debug-key fallback. The workflows have not run on GitHub
-  yet.
+- `ci.yml` runs green on GitHub: tests pass, the APKs are signed with the
+  project key. Signing certificate: `CN=FreedomCats`, SHA-256
+  `a0463ae9637d96ee9ad8b8ce305aa62b0c78868fa565d19111f26eca74e0500c` (public,
+  it is in every APK). No Node.js 20 warnings are left.
+- Actions in use: `checkout@v7`, `setup-java@v6`, `setup-go@v7`,
+  `upload-artifact@v7`, `download-artifact@v7`, `action-gh-release@v3`,
+  `subosito/flutter-action@v2` and `dtolnay/rust-toolchain` (composite, no
+  Node). `release.yml` has not run yet: its macOS jobs, `download-artifact`
+  and `action-gh-release` are untested on GitHub. The release is created only
+  if all three build jobs (Android, macOS arm64, macOS Intel) succeed.
+- The secret `ANDROID_KEY_ALIAS` is `dnstt`, so GitHub masks every `dnstt` in
+  the logs (`***_xyz_app`). Cosmetic; the alias could move out of the secrets.
+- Artifacts are only on the run's Summary page (not in the job pages, not in
+  the GitHub mobile app) and need a GitHub login; releases are easier to
+  install from a phone.
 - Only `arm64-v8a` has the Slipstream binary; the `armeabi-v7a` and `x86_64`
   APKs work with DNSTT only. `dnstt.aar` and `libslipstream_client.so` are
   still prebuilt from upstream.
 
 ## Next steps
 
-0. **First CI build** (needs the user):
-   - enable GitHub Actions in the fork (Actions tab);
-   - create the release key and add the four secrets (`CLAUDE.md`, "Signing
-     Release Builds"); keep a backup of the key;
-   - push to the work branch, download `android-apks` from the CI run and
-     install the `arm64-v8a` APK on the phone;
-   - for a release: lightweight tag `v*` on the work branch (`AGENTS.md`). The
-     `workflow_dispatch` button uses the workflow from the default branch
-     `main`, which is still upstream's.
+0. **First release, for installing on the phone** (the user's top priority:
+   a working app on the phone comes first). Proposed to the user, waiting for
+   a yes and the version:
+   - bump `version:` in `pubspec.yaml` from `2.2.0+5` (same as upstream) to
+     `2.3.0+6`; the APK version comes from there, not from the tag, and
+     Android refuses a lower build number than the installed one;
+   - lightweight tag on the work branch, proposed `v2.3.0-beta` (prerelease,
+     because the name contains `beta`), pushed with `git push origin <tag>`;
+   - follow the "Build and Release" run (about 20–30 min, macOS is the slow
+     part) and fix what fails; check that the release notes show the
+     certificate SHA-256 above;
+   - the phone may have the upstream app installed: same application ID,
+     different signature, so the user exports configs and uninstalls it first.
+   Do not use the "Run workflow" button of "Build and Release": it runs the
+   workflow from `main`, which is still upstream's code without signing.
 1. **Live check of SOCKS5 auth** on a device with a real server: VPN and proxy
    modes, DNSTT and Slipstream, DNS server tests, wrong password (expect
    `Socks5AuthRelay: Upstream SOCKS5 authentication failed` in logcat).
@@ -112,6 +133,9 @@ Solution:
    - rerun Dart and Kotlin tests and the APK build;
    - PR body with `Closes #15`. This session has no access to the upstream
      repository: the user opens the PR from the fork, or access is attached.
+   Suggested to the user, not decided: do fix 3.2 (shared proxy) before this
+   PR, so upstream does not get a relay that lends the upstream account to the
+   LAN.
 3. **Fixes from `docs/CODE_REVIEW.md`**, in this order:
    1. IPv6 leak in VPN mode and device DNS queries bypassing the tunnel.
    2. "Share proxy" exposes an open SOCKS5 proxy to the LAN. Now more
@@ -142,6 +166,19 @@ Solution:
   Gradle unit tests leave `android/build/`; delete it.
 - `android/gradlew` and the wrapper jar are not in git (`android/.gitignore`);
   `flutter build apk --config-only` generates them in a few seconds.
+- A fresh cloud container has no Flutter or Android SDK. Download the Flutter
+  3.38.7 tarball from `storage.googleapis.com/flutter_infra_release` and the
+  Android command-line tools from `dl.google.com`, then `sdkmanager` for
+  `platforms;android-36`, `build-tools;35.0.0`, `platform-tools` and the NDK;
+  write `sdk.dir` and `flutter.sdk` into `android/local.properties` (ignored).
+- Following CI from a session: the fork is public, so the unauthenticated
+  GitHub API works for runs and jobs
+  (`api.github.com/repos/FreedomCats/dnstt_xyz_app/actions/runs`); job logs
+  via the GitHub MCP tools (`get_job_logs`). The GitHub API for other
+  repositories is blocked in sessions, raw files on
+  `raw.githubusercontent.com` are readable.
+- `workflow_dispatch` buttons only exist for workflows on the default branch
+  `main`; `ci.yml` runs on every push to any branch.
 - Run tests:
   - `flutter test test/socks5_auth_relay_test.dart`
   - `cd android && ./gradlew :app:testDebugUnitTest --tests 'xyz.dnstt.app.Socks5AuthRelayTest'`
