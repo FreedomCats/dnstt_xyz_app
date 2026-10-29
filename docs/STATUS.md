@@ -143,6 +143,10 @@ Solution:
   Gradle `preBuild` stops with "run scripts/build_aar.sh" if the AAR is
   missing.
 - Locally: Kotlin unit tests pass and release APKs build with the new AAR.
+- `ci.yml` is green with the CI-built AAR (tests, signed APKs, path checks).
+  The `.so` checksums in the job summary equal those of a local build of the
+  same commit; the `.aar` file itself differs only through `classes.jar`
+  (compiled by the local JDK).
 - Not yet checked on a device: the Go code is unchanged, but the toolchain and
   the build are new. The user should install a CI APK and connect with DNSTT.
 
