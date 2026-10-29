@@ -129,3 +129,7 @@ vendor/slipstream-rust/.picoquic-build/
 # Build artifacts - ignore Libraries contents except slipstream-client
 macos/Runner/Libraries/*
 !macos/Runner/Libraries/slipstream-client
+
+# Журналы этапов, рабочие записки, скрипты, конфиги и логи прогонов — локально (AGENTS.md).
+/docs/local/
+/docs/runs/

@@ -1,3 +1,5 @@
+@AGENTS.md
+
 # DNSTT Client - Build & Development Guide
 
 **Website**: https://dnstt.xyz
