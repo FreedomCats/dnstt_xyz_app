@@ -271,7 +271,10 @@ Solution:
   TUN in a network namespace with the same config against a local SOCKS5
   server: fake `A`, empty `AAAA`/`TXT`, HTTP by fake address (CONNECT by host
   name) and by IPv4 literal, UDP as UDP ASSOCIATE refused cleanly. IPv6 could
-  not be run (no IPv6 in the container).
+  not be run (no IPv6 in the container). A local release build keeps
+  `TProxyService` and its three natives through R8.
+- `ci.yml` is green on the stage 5 commit (Kotlin tests with the submodule,
+  signed APKs with the engine for every ABI, path checks).
 - Not checked live (needs the user's server and phone): browsing, downloads,
   a messenger, IPv6 and DNS leak tests, SSH mode, Slipstream and DNSTT, with
   and without upstream auth, DoH/DoT; load from UDP ASSOCIATE tries (QUIC)
