@@ -29,6 +29,9 @@ class DnsttFfiService {
   int Function(Pointer<Utf8>)? _setTlsFingerprint;
   int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int,
       Pointer<Utf8>, Pointer<Utf8>)? _testDnsServerEx;
+  // Optional: missing in libraries built before the UDP→DoH/DoT bridge
+  int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)? _bridgeStart;
+  int Function(int)? _bridgeStop;
 
   /// Error found on the Dart side, reported by [getLastError] instead of the
   /// library's.
@@ -184,6 +187,11 @@ class DnsttFfiService {
                 int, Pointer<Utf8>, Pointer<Utf8>)
         >('dnstt_test_dns_server_ex');
       }
+      if (_lib!.providesSymbol('dnstt_bridge_start') && _lib!.providesSymbol('dnstt_bridge_stop')) {
+        _bridgeStart = _lib!.lookupFunction<Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>),
+            int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>)>('dnstt_bridge_start');
+        _bridgeStop = _lib!.lookupFunction<Int32 Function(Int32), int Function(int)>('dnstt_bridge_stop');
+      }
 
       _loaded = true;
       _loading = false;
@@ -282,6 +290,40 @@ class DnsttFfiService {
     final error = errorPtr.toDartString();
     _freeString(errorPtr);
     return error;
+  }
+
+  /// Start a local UDP DNS server on 127.0.0.1 that forwards queries to the
+  /// resolver [dnsServer] over UDP, DoH or DoT (for slipstream-client, which
+  /// speaks only UDP). It waits for the connection to the resolver, so call it
+  /// outside the UI isolate. Returns the port, or null (message in
+  /// [getLastError]).
+  int? startBridge({
+    required String dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
+  }) {
+    if (!_loaded) {
+      throw StateError('Library not loaded. Call load() first.');
+    }
+    _localError = null;
+    final bridgeStart = _bridgeStart;
+    if (bridgeStart == null) {
+      _localError = _tooOldForDoh;
+      return null;
+    }
+    final ptrs = [dnsServer, dnsBootstrap ?? '', tlsFingerprint].map((v) => v.toNativeUtf8()).toList();
+    try {
+      final port = bridgeStart(ptrs[0], ptrs[1], ptrs[2]);
+      return port > 0 ? port : null;
+    } finally {
+      ptrs.forEach(calloc.free);
+    }
+  }
+
+  /// Stop the bridge started on [port].
+  void stopBridge(int port) {
+    if (!_loaded) return;
+    _bridgeStop?.call(port);
   }
 
   /// Test a DNS server by making an actual connection through the tunnel

@@ -26,6 +26,8 @@ environment details, servers, credentials or other personal data.
       see below).
   11. Stage 3: DoH and DoT for DNSTT in the app (`docs/STAGE3_APP_DOH_DOT.md`,
       see below).
+  12. Stage 4: DoH and DoT for Slipstream (`docs/STAGE4_SLIPSTREAM_DOH_DOT.md`,
+      see below).
 - No pull requests are open yet. GitHub Actions are enabled in the fork, and
   the four signing secrets are set. No release has been made yet; the user
   will say when they want one.
@@ -189,8 +191,8 @@ Solution:
   bridge; the tunnel client's sockets are also protected.
 - Desktop: FFI binds the stage 2 exports lazily; DoH/DoT needs a current
   `libdnstt`.
-- Slipstream gets `host:port` from the spec (ports and IPv6 now work) and
-  refuses DoH/DoT servers with a clear message until stage 4.
+- Slipstream gets `host:port` from the spec (ports and IPv6 now work); DoH/DoT
+  for Slipstream came in stage 4.
 - Tests: resolver spec table, JSON compatibility and imports (Dart), relay
   tests (Dart, Kotlin); debug APK builds.
 - `ci.yml` is green on the stage 3 commit. Two docs-only commits failed
@@ -201,6 +203,40 @@ Solution:
 - Not yet checked live (the user has no test server available for now): DNSTT
   over DoH and DoT in VPN and proxy modes, VPN-mode device DNS through the
   bridge, desktop.
+
+## Done: DoH and DoT for Slipstream (stage 4)
+
+- `slipstream-client` speaks only UDP; for a DoH/DoT server it gets a local
+  bridge (`127.0.0.1:<port>`) that lives as long as the subprocess. Android:
+  `SlipstreamBridge` starts it (`Mobile.startBridge`) for proxy mode and DNS
+  tests; in VPN mode `DnsttVpnService` passes the bridge it already runs for
+  device DNS (one connection to the resolver). The Slipstream channel calls
+  and intents carry `ResolverOptions`. Desktop: `SlipstreamService` starts the
+  bridge through FFI (`dnstt_bridge_start`, bound lazily, run in another
+  isolate) and reports "library too old" without it. The DoH/DoT refusals are
+  gone.
+- Read in `vendor/slipstream-rust`: answers are assigned to a resolver by their
+  source address; in recursive mode the client ignores DNS IDs. The bridge
+  needed no change for Slipstream. It now also restores the ID when a resolver
+  answers with another one (match by question), for device DNS in VPN mode.
+- Desktop `slipstream-client` listened on all interfaces (no
+  `--tcp-listen-host`): an open proxy for the local network. Now `127.0.0.1`,
+  like DNSTT and the relay on desktop.
+- Checked in the session without a real server: `TestSlipstreamOverBridge`
+  (opt-in, see `CLAUDE.md`) downloads 4 MB through the real
+  `slipstream-client` and `slipstream-server` over UDP, and over DoH and DoT
+  through the bridge. On loopback the bridge is no bottleneck: DoH and DoT were
+  as fast as direct UDP or faster. The Dart side (FFI bridge, isolate,
+  subprocess, errors for invalid and unreachable servers) was checked the same
+  way with a temporary test and a Linux `libdnstt.so`. The session container
+  has no IPv6, and `slipstream-client` always binds `[::]`: the local runs used
+  a client patched only in the scratch copy; phones and desktops have IPv6
+  sockets.
+- Tests: Go bridge ID test; Dart and Kotlin tests pass; debug APK builds;
+  `flutter analyze` adds only one `avoid_print` info.
+- Not checked live (needs the user's server): Slipstream over real DoH/DoT
+  resolvers on Android and desktop, throughput and HTTP 429 rate limits of
+  public resolvers.
 
 ## Next steps
 
@@ -250,31 +286,30 @@ Solution:
    Go, then in the app for DNSTT, then Slipstream through a local UDP→DoH/DoT
    bridge, then tun2socks (hev-socks5-tunnel, fake-IP DNS, IPv6), then an
    optional tunnel-DNS mode. Stages 1 (Go library in CI), 2 (DoH/DoT in the
-   Go library) and 3 (DoH/DoT for DNSTT in the app) are done; next is stage 4,
-   Slipstream over DoH/DoT.
+   Go library), 3 (DoH/DoT for DNSTT in the app) and 4 (Slipstream over
+   DoH/DoT) are done; next is stage 5, tun2socks.
+5. **Live check of DoH/DoT** when the user has a server: DNSTT and Slipstream
+   over a DoH and a DoT resolver, VPN and proxy modes, DNS tests, desktop;
+   Slipstream throughput over DoH vs UDP and whether public resolvers answer
+   HTTP 429.
 
-## Resume here: stage 4 (DoH/DoT for Slipstream)
+## Resume here: stage 5 (tun2socks in VPN mode)
 
-The next session starts stage 4 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md`
-(section 6, "Stage 4"; design in section 3.4). First write its plan as
-`docs/STAGE4_SLIPSTREAM_DOH_DOT.md`, then implement. Starting points:
+The next session starts stage 5 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md`
+(section 6, "Stage 5"; design in section 4). First write its plan as
+`docs/STAGE5_TUN2SOCKS.md`, then implement. Starting points:
 
-- Android: `SlipstreamBridge.startClient` refuses non-UDP specs
-  (`Mobile.udpResolverAddr` returns ""). For DoH/DoT start
-  `Mobile.startBridge(spec, bootstrap, fingerprint)` and pass
-  `127.0.0.1:<port>`; stop the bridge with the subprocess. Callers:
-  `DnsttVpnService.startSlipstreamClient`, `SlipstreamProxyService`,
-  `MainActivity.testSlipstreamDnsServer`; Slipstream intents and the
-  `connectSlipstream*`/`testSlipstreamDnsServer` channel calls do not carry
-  `ResolverOptions` yet (DNSTT ones do).
-- Desktop: `SlipstreamService.resolverArg` returns null for DoH/DoT; bind
-  `dnstt_bridge_start`/`dnstt_bridge_stop` in `dnstt_ffi_service.dart`.
-- Dart refusals to remove: `VpnService.connectSlipstream` and
-  `connectSlipstreamProxy`, `DnsttService.testDnsServer` (Slipstream branch),
-  `SlipstreamService.udpOnlyMessage`.
-- In VPN mode, Slipstream and device DNS can share one bridge.
-- Live measurement in the plan (Slipstream over DoH vs UDP, rate limits)
-  needs the user's server; the user will test later.
+- Engine: hev-socks5-tunnel as a submodule at a pinned release tag, built by
+  Gradle `ndkBuild` for all ABIs, JNI class `xyz.dnstt.app.TProxyService`;
+  check its license (section 4.1) and the `.so` with
+  `scripts/check_binary_paths.sh` in CI.
+- `DnsttVpnService` today: hand-written TCP stack (`TcpConnection.kt`,
+  `Socks5Client.kt`, packet code), IPv4 only, device DNS through
+  `startDnsForwarding` (virtual DNS `198.18.0.2`, bridge for DoH/DoT, which
+  Slipstream shares). Stage 5 replaces all of it; Slipstream then needs its
+  own bridge again in VPN mode (`SlipstreamBridge` starts one when given the
+  DoH/DoT spec).
+- Live checks of stage 5 need a real server; the user tests later.
 
 ## Working notes
 
@@ -299,6 +334,13 @@ The next session starts stage 4 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md`
   `flutter analyze` output (line numbers stripped) with that of the stashed
   tree; the baseline has about 110 infos and one error in the stale
   `test/widget_test.dart`.
+- `slipstream-client` and `slipstream-server` build from
+  `vendor/slipstream-rust` with `cargo build --release` (about 3 minutes,
+  after `git submodule update --init --recursive` there). Build in a copy in
+  the scratchpad to keep the submodule clean. Without IPv6 in the container,
+  the client fails with "Address family not supported": patch the copy (UDP
+  socket on `0.0.0.0`, no IPv4-mapped addresses in
+  `normalize_dual_stack_addr`) before running `TestSlipstreamOverBridge`.
 - Unused code, not imported anywhere: `lib/screens/connection_screen.dart`,
   `lib/screens/test_screen.dart`, `lib/data/dns_server_lists.dart`. Keep new
   parameters optional so they compile.

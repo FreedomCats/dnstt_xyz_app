@@ -401,11 +401,17 @@ class DnsttVpnService : VpnService() {
             Log.d(TAG, "DNS Server (resolver): $dnsServer, Domain: $tunnelDomain")
             Log.d(TAG, "Listen address: $proxyHost:$proxyPort")
 
+            // A DoH/DoT resolver already has a bridge for device DNS: slipstream-client
+            // sends its queries there too (a plain UDP address) instead of opening a
+            // second connection to the resolver.
+            val resolver = dnsBridge?.let { "127.0.0.1:${it.port()}" } ?: dnsServer
+
             val started = startTunnelWithRelay { host, port ->
                 slipstreamBridge = SlipstreamBridge()
                 val bridgeStarted = slipstreamBridge!!.startClient(
                     domain = tunnelDomain,
-                    dnsServer = dnsServer,
+                    dnsServer = resolver,
+                    resolverOptions = resolverOptions,
                     congestionControl = congestionControl,
                     keepAliveInterval = keepAliveInterval,
                     port = port,

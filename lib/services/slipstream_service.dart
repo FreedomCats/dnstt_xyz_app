@@ -1,31 +1,70 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'package:socks5_proxy/socks_client.dart';
 import '../models/resolver_spec.dart';
+import 'dnstt_ffi_service.dart';
 
 /// Manages the slipstream-client binary as a subprocess on desktop platforms.
 /// Slipstream uses QUIC-over-DNS and is significantly faster than DNSTT.
 ///
 /// The slipstream-client binary provides a local SOCKS5 proxy, same as DNSTT.
 /// DNS resolvers come from the DNS server list (same as DNSTT).
+///
+/// slipstream-client sends plain UDP only. For a DoH/DoT resolver it gets a
+/// local bridge from libdnstt (`127.0.0.1:<port>`) that forwards its queries
+/// and lives as long as the subprocess.
 class SlipstreamService {
   static SlipstreamService? _instance;
   static SlipstreamService get instance => _instance ??= SlipstreamService._();
 
-  /// slipstream-client reaches its resolver over plain UDP only (DoH/DoT
-  /// through a local bridge is planned).
-  static const String udpOnlyMessage = 'Slipstream supports only plain UDP DNS servers for now';
-
-  /// The `--resolver` value for a resolver spec (`host:port`), or null for
-  /// DoH/DoT and invalid specs.
+  /// The `--resolver` value for a UDP resolver spec (`host:port`), or null
+  /// for DoH/DoT and invalid specs.
   static String? resolverArg(String dnsServer) {
     final spec = ResolverSpec.tryParse(dnsServer);
     return spec?.kind == ResolverKind.udp ? spec!.address : null;
   }
 
+  /// The `--resolver` value for [dnsServer] and the port of the bridge
+  /// started for it (null for a UDP resolver). Throws [_ResolverError] for an
+  /// invalid spec or when the bridge cannot start.
+  static Future<({String resolver, int? bridgePort})> _resolverFor(
+    String dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint,
+  ) async {
+    final spec = ResolverSpec.tryParse(dnsServer);
+    if (spec == null) throw _ResolverError('Invalid DNS server: $dnsServer');
+    if (spec.kind == ResolverKind.udp) return (resolver: spec.address, bridgePort: null);
+
+    // dnstt_bridge_start waits for the connection to the resolver: keep it
+    // off the UI isolate.
+    final (port, error) = await Isolate.run(() {
+      final ffi = DnsttFfiService.instance;
+      if (!ffi.isLoaded) ffi.load();
+      final port = ffi.startBridge(dnsServer: dnsServer, dnsBootstrap: dnsBootstrap, tlsFingerprint: tlsFingerprint);
+      return (port, port == null ? ffi.getLastError() : '');
+    });
+    if (port == null) throw _ResolverError(error);
+    print('SlipstreamService: DNS bridge to $dnsServer on 127.0.0.1:$port');
+    return (resolver: '127.0.0.1:$port', bridgePort: port);
+  }
+
+  static void _stopBridge(int? port) {
+    if (port == null) return;
+    try {
+      final ffi = DnsttFfiService.instance;
+      if (!ffi.isLoaded) ffi.load();
+      ffi.stopBridge(port);
+    } catch (e) {
+      print('SlipstreamService: failed to stop DNS bridge: $e');
+    }
+  }
+
   SlipstreamService._();
 
   Process? _process;
+  int? _bridgePort;
   String? _lastError;
   bool _isRunning = false;
 
@@ -86,7 +125,8 @@ class SlipstreamService {
   /// Start the slipstream-client subprocess.
   ///
   /// [domain] - Tunnel domain (e.g., "tunnel.example.com")
-  /// [dnsServerAddr] - DNS server (resolver spec) used as resolver; must be plain UDP
+  /// [dnsServerAddr] - DNS server (resolver spec) used as resolver
+  /// [dnsBootstrap], [tlsFingerprint] - how to reach a DoH/DoT resolver
   /// [listenPort] - Local SOCKS5 proxy port (default 7000)
   /// [congestionControl] - "bbr" or "dcubic" (default "dcubic")
   /// [keepAliveInterval] - Keep-alive interval in ms (default 400)
@@ -94,6 +134,8 @@ class SlipstreamService {
   Future<bool> startClient({
     required String domain,
     required String dnsServerAddr,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     int listenPort = 7000,
     String congestionControl = 'dcubic',
     int keepAliveInterval = 400,
@@ -112,14 +154,13 @@ class SlipstreamService {
 
     _lastError = null;
 
-    final resolver = resolverArg(dnsServerAddr);
-    if (resolver == null) {
-      _lastError = udpOnlyMessage;
-      return false;
-    }
-
     try {
+      final (:resolver, :bridgePort) = await _resolverFor(dnsServerAddr, dnsBootstrap, tlsFingerprint);
+      _bridgePort = bridgePort;
       final args = [
+        // Without it slipstream-client listens on all interfaces: an open
+        // proxy for the local network.
+        '--tcp-listen-host', '127.0.0.1',
         '--tcp-listen-port', listenPort.toString(),
         '--domain', domain,
         '--resolver', resolver,
@@ -173,6 +214,8 @@ class SlipstreamService {
         _lastError = 'slipstream-client failed to start (exit code: $code)';
         _isRunning = false;
         _process = null;
+        _stopBridge(_bridgePort);
+        _bridgePort = null;
         return false;
       }
 
@@ -181,17 +224,22 @@ class SlipstreamService {
     } catch (e) {
       _lastError = e.toString();
       _isRunning = false;
+      _process?.kill();
       _process = null;
+      _stopBridge(_bridgePort);
+      _bridgePort = null;
       return false;
     }
   }
 
-  /// Stop the running slipstream-client subprocess.
+  /// Stop the running slipstream-client subprocess and its DNS bridge.
   Future<void> stopClient() async {
     if (_process != null) {
       _process!.kill();
       _process = null;
     }
+    _stopBridge(_bridgePort);
+    _bridgePort = null;
     _isRunning = false;
   }
 
@@ -205,6 +253,8 @@ class SlipstreamService {
   Future<int> testServer({
     required String domain,
     required String dnsServerAddr,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     String testUrl = 'https://api.ipify.org?format=json',
     int timeoutMs = 15000,
     String congestionControl = 'dcubic',
@@ -219,19 +269,18 @@ class SlipstreamService {
       return -1;
     }
 
-    final resolver = resolverArg(dnsServerAddr);
-    if (resolver == null) {
-      print('SlipstreamService.testServer: $udpOnlyMessage');
-      return -1;
-    }
-
     // Use a unique port for each test to avoid port conflicts
     final listenPort = _nextTestPort++;
     if (_nextTestPort > 19500) _nextTestPort = 18500;
 
     Process? testProcess;
+    int? bridgePort;
     try {
+      final resolverFor = await _resolverFor(dnsServerAddr, dnsBootstrap, tlsFingerprint);
+      final resolver = resolverFor.resolver;
+      bridgePort = resolverFor.bridgePort;
       final args = [
+        '--tcp-listen-host', '127.0.0.1',
         '--tcp-listen-port', listenPort.toString(),
         '--domain', domain,
         '--resolver', resolver,
@@ -318,6 +367,16 @@ class SlipstreamService {
           },
         );
       }
+      _stopBridge(bridgePort);
     }
   }
+}
+
+/// A DNS server slipstream-client cannot use; the message is for the user.
+class _ResolverError implements Exception {
+  final String message;
+  _ResolverError(this.message);
+
+  @override
+  String toString() => message;
 }

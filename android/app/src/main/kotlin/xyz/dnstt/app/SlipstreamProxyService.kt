@@ -42,6 +42,7 @@ class SlipstreamProxyService : Service() {
     }
 
     private var dnsServer: String = "8.8.8.8"
+    private var resolverOptions = ResolverOptions()
     private var tunnelDomain: String = ""
     private var proxyPort: Int = 7000
     private var congestionControl: String = "dcubic"
@@ -66,6 +67,7 @@ class SlipstreamProxyService : Service() {
         return when (intent?.action) {
             ACTION_CONNECT -> {
                 dnsServer = intent.getStringExtra(EXTRA_DNS_SERVER) ?: "8.8.8.8"
+                resolverOptions = ResolverOptions.from(intent)
                 tunnelDomain = intent.getStringExtra(EXTRA_TUNNEL_DOMAIN) ?: ""
                 proxyPort = intent.getIntExtra(EXTRA_PROXY_PORT, 7000)
                 congestionControl = intent.getStringExtra(EXTRA_CONGESTION_CONTROL) ?: "dcubic"
@@ -130,6 +132,7 @@ class SlipstreamProxyService : Service() {
             var started = slipstreamBridge!!.startClient(
                 domain = tunnelDomain,
                 dnsServer = dnsServer,
+                resolverOptions = resolverOptions,
                 congestionControl = congestionControl,
                 keepAliveInterval = keepAliveInterval,
                 port = tunnelPort,

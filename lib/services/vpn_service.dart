@@ -5,7 +5,6 @@ import 'dnstt_ffi_service.dart';
 import 'slipstream_service.dart';
 import 'socks5_auth_relay.dart';
 import '../models/dnstt_config.dart';
-import '../models/resolver_spec.dart';
 
 enum VpnState {
   disconnected,
@@ -495,6 +494,8 @@ class VpnService {
   /// Connect on desktop using Slipstream subprocess
   Future<bool> _connectDesktopSlipstream({
     required String dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     required String tunnelDomain,
     String congestionControl = 'dcubic',
     int keepAliveInterval = 400,
@@ -514,6 +515,8 @@ class VpnService {
       final started = await slipstream.startClient(
         domain: tunnelDomain,
         dnsServerAddr: dnsServer,
+        dnsBootstrap: dnsBootstrap,
+        tlsFingerprint: tlsFingerprint,
         listenPort: tunnelPort,
         congestionControl: congestionControl,
         keepAliveInterval: keepAliveInterval,
@@ -571,6 +574,8 @@ class VpnService {
   /// Connect using Slipstream transport (desktop or mobile)
   Future<bool> connectSlipstream({
     required String dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     required String tunnelDomain,
     String congestionControl = 'dcubic',
     int keepAliveInterval = 400,
@@ -578,12 +583,6 @@ class VpnService {
     String? socksUsername,
     String? socksPassword,
   }) async {
-    if ((ResolverSpec.kindOf(dnsServer) ?? ResolverKind.udp) != ResolverKind.udp) {
-      _lastError = SlipstreamService.udpOnlyMessage;
-      _currentState = VpnState.error;
-      _stateController.add(_currentState);
-      return false;
-    }
     _currentState = VpnState.connecting;
     _stateController.add(_currentState);
     _lastError = null;
@@ -597,6 +596,8 @@ class VpnService {
     if (_isDesktop) {
       return _connectDesktopSlipstream(
         dnsServer: dnsServer,
+        dnsBootstrap: dnsBootstrap,
+        tlsFingerprint: tlsFingerprint,
         tunnelDomain: tunnelDomain,
         congestionControl: congestionControl,
         keepAliveInterval: keepAliveInterval,
@@ -617,6 +618,8 @@ class VpnService {
     try {
       final result = await _channel.invokeMethod<bool>('connectSlipstream', {
         'dnsServer': dnsServer,
+        'dnsBootstrap': dnsBootstrap,
+        'tlsFingerprint': tlsFingerprint,
         'tunnelDomain': tunnelDomain,
         'congestionControl': congestionControl,
         'keepAliveInterval': keepAliveInterval,
@@ -652,6 +655,8 @@ class VpnService {
   /// Connect Slipstream in proxy-only mode on Android
   Future<bool> connectSlipstreamProxy({
     required String dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     required String tunnelDomain,
     int proxyPort = 1080,
     String congestionControl = 'dcubic',
@@ -660,15 +665,11 @@ class VpnService {
     String? socksUsername,
     String? socksPassword,
   }) async {
-    if ((ResolverSpec.kindOf(dnsServer) ?? ResolverKind.udp) != ResolverKind.udp) {
-      _lastError = SlipstreamService.udpOnlyMessage;
-      _currentState = VpnState.error;
-      _stateController.add(_currentState);
-      return false;
-    }
     if (_isDesktop) {
       return connectSlipstream(
         dnsServer: dnsServer,
+        dnsBootstrap: dnsBootstrap,
+        tlsFingerprint: tlsFingerprint,
         tunnelDomain: tunnelDomain,
         congestionControl: congestionControl,
         keepAliveInterval: keepAliveInterval,
@@ -698,6 +699,8 @@ class VpnService {
     try {
       final result = await _channel.invokeMethod<bool>('connectSlipstreamProxy', {
         'dnsServer': dnsServer,
+        'dnsBootstrap': dnsBootstrap,
+        'tlsFingerprint': tlsFingerprint,
         'tunnelDomain': tunnelDomain,
         'proxyPort': proxyPort,
         'congestionControl': congestionControl,
@@ -1478,6 +1481,8 @@ class VpnService {
   /// Returns latency in milliseconds on success, -1 on failure
   Future<int> testSlipstreamDnsServer({
     required String dnsServer,
+    String? dnsBootstrap,
+    String tlsFingerprint = '',
     required String tunnelDomain,
     String testUrl = 'https://api.ipify.org?format=json',
     int timeoutMs = 15000,
@@ -1493,6 +1498,8 @@ class VpnService {
         return await SlipstreamService.instance.testServer(
           domain: tunnelDomain,
           dnsServerAddr: dnsServer,
+          dnsBootstrap: dnsBootstrap,
+          tlsFingerprint: tlsFingerprint,
           testUrl: testUrl,
           timeoutMs: timeoutMs,
           congestionControl: congestionControl,
@@ -1513,6 +1520,8 @@ class VpnService {
     try {
       final result = await _channel.invokeMethod<int>('testSlipstreamDnsServer', {
         'dnsServer': dnsServer,
+        'dnsBootstrap': dnsBootstrap,
+        'tlsFingerprint': tlsFingerprint,
         'tunnelDomain': tunnelDomain,
         'testUrl': testUrl,
         'timeoutMs': timeoutMs,

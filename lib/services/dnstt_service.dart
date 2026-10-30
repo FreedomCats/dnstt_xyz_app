@@ -241,11 +241,9 @@ class DnsttService {
   }) async {
     // Slipstream transport
     if (transportType == TransportType.slipstream && tunnelDomain != null) {
-      if (server.isEncrypted) {
-        return DnsttTestResult(server: server, result: TestResult.failed, message: SlipstreamService.udpOnlyMessage);
-      }
       return _testDnsServerViaSlipstream(
         server,
+        tlsFingerprint: tlsFingerprint,
         tunnelDomain: tunnelDomain,
         testUrl: testUrl,
         timeout: timeout,
@@ -286,6 +284,7 @@ class DnsttService {
   /// Test DNS server using Slipstream transport
   static Future<DnsttTestResult> _testDnsServerViaSlipstream(
     DnsServer server, {
+    String tlsFingerprint = '',
     required String tunnelDomain,
     required String testUrl,
     required Duration timeout,
@@ -301,6 +300,8 @@ class DnsttService {
         final result = await SlipstreamService.instance.testServer(
           domain: tunnelDomain,
           dnsServerAddr: server.address,
+          dnsBootstrap: server.bootstrap,
+          tlsFingerprint: tlsFingerprint,
           testUrl: testUrl,
           timeoutMs: timeout.inMilliseconds,
           congestionControl: congestionControl,
@@ -340,6 +341,8 @@ class DnsttService {
 
       final result = await vpnService.testSlipstreamDnsServer(
         dnsServer: server.address,
+        dnsBootstrap: server.bootstrap,
+        tlsFingerprint: tlsFingerprint,
         tunnelDomain: tunnelDomain,
         testUrl: testUrl,
         timeoutMs: timeout.inMilliseconds,

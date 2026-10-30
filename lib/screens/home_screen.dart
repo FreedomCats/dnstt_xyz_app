@@ -910,6 +910,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final config = state.activeConfig!;
       success = await _vpnService.connectSlipstreamProxy(
         dnsServer: state.activeDns?.address ?? '8.8.8.8',
+        dnsBootstrap: state.activeDns?.bootstrap,
+        tlsFingerprint: state.tlsFingerprint,
         tunnelDomain: config.tunnelDomain,
         proxyPort: state.proxyPort,
         congestionControl: config.congestionControl ?? 'dcubic',
@@ -923,6 +925,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final config = state.activeConfig!;
       success = await _vpnService.connectSlipstream(
         dnsServer: state.activeDns?.address ?? '8.8.8.8',
+        dnsBootstrap: state.activeDns?.bootstrap,
+        tlsFingerprint: state.tlsFingerprint,
         tunnelDomain: config.tunnelDomain,
         congestionControl: config.congestionControl ?? 'dcubic',
         keepAliveInterval: config.keepAliveInterval ?? 400,

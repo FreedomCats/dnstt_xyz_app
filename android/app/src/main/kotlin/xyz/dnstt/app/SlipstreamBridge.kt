@@ -41,6 +41,8 @@ class SlipstreamBridge {
 
     private var process: Process? = null
     private var stderrThread: Thread? = null
+    // Local UDP→DoH/DoT bridge the subprocess sends its queries to, for an encrypted resolver
+    private var dnsBridge: mobile.Bridge? = null
 
     var lastError: String? = null
         private set
@@ -49,8 +51,10 @@ class SlipstreamBridge {
      * Start the slipstream-client subprocess.
      *
      * @param domain Tunnel domain (e.g., "tunnel.example.com")
-     * @param dnsServer resolver spec from the DNS server list; must be plain UDP
-     *   (slipstream-client does not speak DoH/DoT)
+     * @param dnsServer resolver spec from the DNS server list. slipstream-client speaks only
+     *   UDP, so for a DoH/DoT resolver it gets a local bridge (`Mobile.startBridge`) that
+     *   lives as long as the subprocess.
+     * @param resolverOptions bootstrap address and TLS fingerprint for a DoH/DoT resolver
      * @param congestionControl "bbr" or "dcubic" (default "dcubic")
      * @param keepAliveInterval Keep-alive interval in ms (default 400)
      * @param port Local TCP listen port
@@ -61,6 +65,7 @@ class SlipstreamBridge {
     fun startClient(
         domain: String,
         dnsServer: String,
+        resolverOptions: ResolverOptions = ResolverOptions(),
         congestionControl: String = "dcubic",
         keepAliveInterval: Int = 400,
         port: Int = 7000,
@@ -80,14 +85,13 @@ class SlipstreamBridge {
 
         lastError = null
 
-        // "host:port" for a UDP resolver spec, "" for DoH/DoT or an invalid spec
-        val resolver = Mobile.udpResolverAddr(dnsServer)
-        if (resolver.isEmpty()) {
-            lastError = "Slipstream supports only plain UDP DNS servers for now"
-            return false
-        }
-
         return try {
+            val resolver = resolverAddress(dnsServer, resolverOptions)
+            if (resolver == null) {
+                lastError = "Invalid DNS server: $dnsServer"
+                return false
+            }
+
             val args = mutableListOf(
                 binary,
                 "--tcp-listen-port", port.toString(),
@@ -134,6 +138,7 @@ class SlipstreamBridge {
                 lastError = "slipstream-client exited immediately with code: $exitCode"
                 process = null
                 stderrThread = null
+                stopDnsBridge()
                 Log.e(TAG, "Process exited: $lastError")
                 false
             } else {
@@ -142,11 +147,41 @@ class SlipstreamBridge {
             }
         } catch (e: Exception) {
             lastError = e.message
+            process?.destroyForcibly()
             process = null
             stderrThread = null
+            stopDnsBridge()
             Log.e(TAG, "Failed to start slipstream-client: ${e.message}", e)
             false
         }
+    }
+
+    /**
+     * The `--resolver` value for a resolver spec: `host:port` of a UDP resolver, or the
+     * address of a new bridge for DoH/DoT; null for an invalid spec.
+     */
+    private fun resolverAddress(dnsServer: String, resolverOptions: ResolverOptions): String? {
+        return when (Mobile.resolverKind(dnsServer)) {
+            "udp" -> Mobile.udpResolverAddr(dnsServer)
+            "doh", "dot" -> {
+                val bridge = Mobile.startBridge(dnsServer, resolverOptions.bootstrap, resolverOptions.tlsFingerprint)
+                dnsBridge = bridge
+                Log.d(TAG, "DNS bridge to $dnsServer on 127.0.0.1:${bridge.port()}")
+                "127.0.0.1:${bridge.port()}"
+            }
+            else -> null
+        }
+    }
+
+    private fun stopDnsBridge() {
+        dnsBridge?.let { bridge ->
+            try {
+                bridge.stop()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping DNS bridge: ${e.message}", e)
+            }
+        }
+        dnsBridge = null
     }
 
     /**
@@ -166,6 +201,7 @@ class SlipstreamBridge {
         }
         process = null
         stderrThread = null
+        stopDnsBridge()
     }
 
     /**

@@ -50,7 +50,7 @@ Traffic flow:
 App Traffic → TUN Interface → TCP State Machine → slipstream-client → DNS queries (QUIC) → Server
 ```
 
-The `slipstream-client` binary runs as a subprocess (not a library). It listens on a local TCP port and forwards connections through the QUIC-over-DNS tunnel. The DNS server from the app's DNS server list is passed as the `--resolver` argument.
+The `slipstream-client` binary runs as a subprocess (not a library). It listens on a local TCP port and forwards connections through the QUIC-over-DNS tunnel. The DNS server from the app's DNS server list is passed as the `--resolver` argument; for a DoH/DoT server the client gets a local UDP→DoH/DoT bridge (`127.0.0.1:<port>`) instead.
 
 ### Protocol Comparison
 
@@ -366,7 +366,10 @@ Android Slipstream manager that:
 - Finds the `libslipstream_client.so` binary in `applicationInfo.nativeLibraryDir`
 - Spawns `slipstream-client` as a subprocess with appropriate arguments
 - Manages lifecycle (start/stop/isRunning)
-- Passes DNS server address as `--resolver` argument
+- Passes the DNS server's `host:port` as `--resolver`; for a DoH/DoT server it starts a local
+  bridge (`Mobile.startBridge`) and passes `127.0.0.1:<port>`, stopping the bridge with the
+  subprocess. In VPN mode `DnsttVpnService` hands it the bridge it already runs for device DNS
+  (one connection to the resolver)
 
 ### SlipstreamProxyService.kt
 
@@ -431,12 +434,21 @@ the `dnstt-client` CLI use it. A resolver is one spec string:
 - DoT redials with backoff after a lost connection and treats a connection as dead after 20 s
   without an answer; DoH uses HTTP/2 pings and a 20 s request timeout. `go test ./...` in
   `go_src` runs an end-to-end test over UDP, DoH and DoT against `dnstt-server`.
+- The bridge forwards queries unchanged and matches answers by DNS ID and question; if a
+  resolver changes the ID, it takes the latest query with the same question and restores the
+  ID. `TestSlipstreamOverBridge` (`go_src/client`) runs the real `slipstream-client` and
+  `slipstream-server` through the bridge over UDP, DoH and DoT when `SLIPSTREAM_CLIENT` and
+  `SLIPSTREAM_SERVER` point to the binaries (`cargo build --release -p slipstream-client -p
+  slipstream-server` in `vendor/slipstream-rust`); skipped otherwise.
 
 ### slipstream_service.dart (Desktop)
 
 Desktop Slipstream manager that:
 - Finds the `slipstream-client` binary in platform-specific locations
-- Spawns it as a subprocess with `--tcp-listen-port`, `--domain`, `--resolver`, `--congestion-control`
+- Spawns it as a subprocess with `--tcp-listen-host 127.0.0.1`, `--tcp-listen-port`, `--domain`,
+  `--resolver`, `--congestion-control`
+- For a DoH/DoT server starts a bridge from `libdnstt` (`DnsttFfiService.startBridge`, run in
+  another isolate because it waits for the resolver connection) and stops it with the subprocess
 - Manages lifecycle, monitors stderr for errors
 - Provides `testServer()` for DNS server testing
 
@@ -680,8 +692,9 @@ without the default port:
   for the library default, `none` for Go's own TLS.
 - The platform channel passes `dnsServer` (the spec), `dnsBootstrap` and `tlsFingerprint`;
   Kotlin wraps the last two in `ResolverOptions`.
-- DNSTT works over all three transports. Slipstream gets `host:port` of a UDP resolver
-  (`Mobile.udpResolverAddr`, `SlipstreamService.resolverArg`) and refuses DoH/DoT servers.
+- Both protocols work over all three transports. Slipstream gets `host:port` of a UDP
+  resolver (`Mobile.udpResolverAddr`, `SlipstreamService.resolverArg`), or of a local bridge
+  to a DoH/DoT resolver.
 - The bundled list `assets/dns/encrypted.json` holds well-known public DoH/DoT resolvers.
 
 ---

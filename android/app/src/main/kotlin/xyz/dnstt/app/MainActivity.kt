@@ -202,7 +202,7 @@ class MainActivity : FlutterActivity() {
                     val congestionControl = call.argument<String>("congestionControl") ?: "dcubic"
                     val keepAliveInterval = call.argument<Int>("keepAliveInterval") ?: 400
                     val gso = call.argument<Boolean>("gso") ?: false
-                    connectSlipstreamVpn(dnsServer, tunnelDomain, congestionControl, keepAliveInterval, gso, socksAuthFrom(call), result)
+                    connectSlipstreamVpn(dnsServer, ResolverOptions.from(call), tunnelDomain, congestionControl, keepAliveInterval, gso, socksAuthFrom(call), result)
                 }
                 "connectSlipstreamProxy" -> {
                     val dnsServer = call.argument<String>("dnsServer") ?: "8.8.8.8"
@@ -211,7 +211,7 @@ class MainActivity : FlutterActivity() {
                     val congestionControl = call.argument<String>("congestionControl") ?: "dcubic"
                     val keepAliveInterval = call.argument<Int>("keepAliveInterval") ?: 400
                     val gso = call.argument<Boolean>("gso") ?: false
-                    connectSlipstreamProxyOnly(dnsServer, tunnelDomain, proxyPort, congestionControl, keepAliveInterval, gso, socksAuthFrom(call), result)
+                    connectSlipstreamProxyOnly(dnsServer, ResolverOptions.from(call), tunnelDomain, proxyPort, congestionControl, keepAliveInterval, gso, socksAuthFrom(call), result)
                 }
                 "disconnectSlipstreamProxy" -> {
                     disconnectSlipstreamProxyOnly(result)
@@ -237,7 +237,7 @@ class MainActivity : FlutterActivity() {
                     val congestionControl = call.argument<String>("congestionControl") ?: "dcubic"
                     val keepAliveInterval = call.argument<Int>("keepAliveInterval") ?: 400
                     val gso = call.argument<Boolean>("gso") ?: false
-                    testSlipstreamDnsServer(dnsServer, tunnelDomain, testUrl, timeoutMs, congestionControl, keepAliveInterval, gso, socksAuthFrom(call), result)
+                    testSlipstreamDnsServer(dnsServer, ResolverOptions.from(call), tunnelDomain, testUrl, timeoutMs, congestionControl, keepAliveInterval, gso, socksAuthFrom(call), result)
                 }
                 else -> result.notImplemented()
             }
@@ -498,6 +498,7 @@ class MainActivity : FlutterActivity() {
     // Slipstream VPN mode
     private fun connectSlipstreamVpn(
         dnsServer: String,
+        resolverOptions: ResolverOptions,
         tunnelDomain: String,
         congestionControl: String,
         keepAliveInterval: Int,
@@ -508,17 +509,18 @@ class MainActivity : FlutterActivity() {
         val intent = VpnService.prepare(this)
         if (intent != null) {
             pendingResult = result
-            pendingSlipstreamVpnParams = SlipstreamVpnParams(dnsServer, tunnelDomain, congestionControl, keepAliveInterval, gso, socksAuth)
+            pendingSlipstreamVpnParams = SlipstreamVpnParams(dnsServer, resolverOptions, tunnelDomain, congestionControl, keepAliveInterval, gso, socksAuth)
             startActivityForResult(intent, VPN_REQUEST_CODE)
             return
         }
 
-        startSlipstreamVpnService(dnsServer, tunnelDomain, congestionControl, keepAliveInterval, gso, socksAuth)
+        startSlipstreamVpnService(dnsServer, resolverOptions, tunnelDomain, congestionControl, keepAliveInterval, gso, socksAuth)
         result.success(true)
     }
 
     private data class SlipstreamVpnParams(
         val dnsServer: String,
+        val resolverOptions: ResolverOptions,
         val tunnelDomain: String,
         val congestionControl: String,
         val keepAliveInterval: Int,
@@ -530,6 +532,7 @@ class MainActivity : FlutterActivity() {
 
     private fun startSlipstreamVpnService(
         dnsServer: String,
+        resolverOptions: ResolverOptions,
         tunnelDomain: String,
         congestionControl: String,
         keepAliveInterval: Int,
@@ -544,6 +547,7 @@ class MainActivity : FlutterActivity() {
             putExtra(DnsttVpnService.EXTRA_PROXY_HOST, "127.0.0.1")
             putExtra(DnsttVpnService.EXTRA_PROXY_PORT, 7000)
             putExtra(DnsttVpnService.EXTRA_DNS_SERVER, dnsServer)
+            resolverOptions.putInto(this)
             putExtra(DnsttVpnService.EXTRA_TUNNEL_DOMAIN, tunnelDomain)
             putExtra(DnsttVpnService.EXTRA_PUBLIC_KEY, "")
             putExtra(DnsttVpnService.EXTRA_TRANSPORT_TYPE, "slipstream")
@@ -558,6 +562,7 @@ class MainActivity : FlutterActivity() {
     // Slipstream proxy-only mode
     private fun connectSlipstreamProxyOnly(
         dnsServer: String,
+        resolverOptions: ResolverOptions,
         tunnelDomain: String,
         proxyPort: Int,
         congestionControl: String,
@@ -591,6 +596,7 @@ class MainActivity : FlutterActivity() {
         val serviceIntent = Intent(this, SlipstreamProxyService::class.java).apply {
             action = SlipstreamProxyService.ACTION_CONNECT
             putExtra(SlipstreamProxyService.EXTRA_DNS_SERVER, dnsServer)
+            resolverOptions.putInto(this)
             putExtra(SlipstreamProxyService.EXTRA_TUNNEL_DOMAIN, tunnelDomain)
             putExtra(SlipstreamProxyService.EXTRA_PROXY_PORT, proxyPort)
             putExtra(SlipstreamProxyService.EXTRA_CONGESTION_CONTROL, congestionControl)
@@ -616,6 +622,7 @@ class MainActivity : FlutterActivity() {
     // Slipstream DNS server testing
     private fun testSlipstreamDnsServer(
         dnsServer: String,
+        resolverOptions: ResolverOptions,
         tunnelDomain: String,
         testUrl: String,
         timeoutMs: Int,
@@ -660,6 +667,7 @@ class MainActivity : FlutterActivity() {
                 val started = bridge.startClient(
                     domain = tunnelDomain,
                     dnsServer = dnsServer,
+                    resolverOptions = resolverOptions,
                     congestionControl = congestionControl,
                     keepAliveInterval = keepAliveInterval,
                     port = port,
@@ -986,6 +994,7 @@ class MainActivity : FlutterActivity() {
                     pendingSlipstreamVpnParams = null
                     startSlipstreamVpnService(
                         params.dnsServer,
+                        params.resolverOptions,
                         params.tunnelDomain,
                         params.congestionControl,
                         params.keepAliveInterval,

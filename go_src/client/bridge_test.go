@@ -174,3 +174,61 @@ func TestBridgeIgnoresStrangers(t *testing.T) {
 		t.Fatalf("got %+v, %v", msg, err)
 	}
 }
+
+// TestBridgeRestoresID checks answers from a resolver that changes DNS IDs.
+func TestBridgeRestoresID(t *testing.T) {
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	go func() {
+		buf := make([]byte, 65536)
+		for {
+			n, addr, err := conn.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			if answer := dnsAnswer(buf[:n]); answer != nil {
+				answer[0], answer[1] = 0, 0
+				conn.WriteTo(answer, addr)
+			}
+		}
+	}()
+	r, _ := ParseResolver(conn.LocalAddr().String())
+	b, err := NewBridge(context.Background(), r, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	client, err := net.DialUDP("udp", nil, b.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	client.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 65536)
+	for i, name := range []string{"a.example.com", "b.example.com", "a.example.com"} {
+		id := uint16(500 + i)
+		if _, err := client.Write(dnsQuery(t, id, name)); err != nil {
+			t.Fatal(err)
+		}
+		n, err := client.Read(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg, err := dns.MessageFromWireFormat(buf[:n])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if msg.ID != id || msg.Question[0].Name.String() != name {
+			t.Errorf("query %d %s: got answer %d %s", id, name, msg.ID, msg.Question[0].Name)
+		}
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.pending) != 0 || len(b.latestID) != 0 {
+		t.Errorf("left %d pending queries, %d IDs", len(b.pending), len(b.latestID))
+	}
+}
