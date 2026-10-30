@@ -12,21 +12,7 @@ import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.net.InetAddress
-import java.net.InetSocketAddress
-import java.nio.ByteBuffer
-import java.util.Collections
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.Executors
-import java.util.concurrent.ThreadPoolExecutor
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
-import java.net.DatagramPacket
-import java.net.DatagramSocket
 import mobile.Mobile
 
 class DnsttVpnService : VpnService() {
@@ -38,10 +24,6 @@ class DnsttVpnService : VpnService() {
 
         const val ACTION_CONNECT = "xyz.dnstt.app.CONNECT"
         const val ACTION_DISCONNECT = "xyz.dnstt.app.DISCONNECT"
-
-        // DNS server the TUN announces to the device (benchmarking range 198.18.0.0/15,
-        // never routed on the Internet). Queries to it are answered through dnsTarget.
-        const val VIRTUAL_DNS_SERVER = "198.18.0.2"
 
         const val EXTRA_PROXY_HOST = "proxy_host"
         const val EXTRA_PROXY_PORT = "proxy_port"
@@ -78,32 +60,11 @@ class DnsttVpnService : VpnService() {
     // Slipstream bridge for VPN mode
     private var slipstreamBridge: SlipstreamBridge? = null
 
-    private var runningThread: Thread? = null
-    private val shouldRun = AtomicBoolean(false)
-
     // Wake lock to prevent CPU from sleeping
     private var wakeLock: PowerManager.WakeLock? = null
 
-    private val tcpConnections = ConcurrentHashMap<String, TcpConnection>()
-
-    // Track SYN packets being processed asynchronously to avoid duplicate handling
-    private val pendingConnections: MutableSet<String> = Collections.synchronizedSet(HashSet())
-
-    // Thread pool for async SYN processing (slipstream SOCKS5 handshake goes through tunnel)
-    private var synExecutor = Executors.newFixedThreadPool(16)
-
-    // Semaphore to limit concurrent SOCKS5 handshakes through the tunnel
-    // DNS tunnels have very limited bandwidth - too many concurrent handshakes will stall the tunnel
-    private val handshakeSemaphore = Semaphore(3)
-
     // Go-based dnstt client from gomobile library
     private var dnsttClient: mobile.DnsttClient? = null
-
-    // Where device DNS queries go: the resolver itself for plain UDP, or dnsBridge
-    // (local UDP to DoH/DoT) for encrypted resolvers
-    private var dnsTarget: InetSocketAddress? = null
-    private var dnsBridge: mobile.Bridge? = null
-    private var dnsExecutor = newDnsExecutor()
 
     // Authenticates to the upstream SOCKS5 proxy when credentials are configured
     private var socksRelay: Socks5AuthRelay? = null
@@ -401,16 +362,11 @@ class DnsttVpnService : VpnService() {
             Log.d(TAG, "DNS Server (resolver): $dnsServer, Domain: $tunnelDomain")
             Log.d(TAG, "Listen address: $proxyHost:$proxyPort")
 
-            // A DoH/DoT resolver already has a bridge for device DNS: slipstream-client
-            // sends its queries there too (a plain UDP address) instead of opening a
-            // second connection to the resolver.
-            val resolver = dnsBridge?.let { "127.0.0.1:${it.port()}" } ?: dnsServer
-
             val started = startTunnelWithRelay { host, port ->
                 slipstreamBridge = SlipstreamBridge()
                 val bridgeStarted = slipstreamBridge!!.startClient(
                     domain = tunnelDomain,
-                    dnsServer = resolver,
+                    dnsServer = dnsServer,
                     resolverOptions = resolverOptions,
                     congestionControl = congestionControl,
                     keepAliveInterval = keepAliveInterval,
@@ -496,14 +452,17 @@ class DnsttVpnService : VpnService() {
             acquireWakeLock()
 
             // IMPORTANT: Establish VPN interface FIRST with app exclusion
-            // This ensures dnstt client's sockets bypass the VPN
+            // This ensures dnstt client's sockets bypass the VPN.
+            // IPv4 and IPv6 both go into the TUN, so no traffic bypasses the tunnel; the
+            // fd stays non-blocking (the default), as the tun2socks engine expects.
             val builder = Builder()
                 .setSession("DNSTT Tunnel")
-                .addAddress("10.0.0.2", 32)
+                .addAddress(Tun2Socks.TUN_IPV4, 32)
+                .addAddress(Tun2Socks.TUN_IPV6, 128)
                 .addRoute("0.0.0.0", 0)
-                .addDnsServer(VIRTUAL_DNS_SERVER)
-                .setMtu(1500)
-                .setBlocking(true)
+                .addRoute("::", 0)
+                .addDnsServer(Tun2Socks.DNS_ADDRESS)
+                .setMtu(Tun2Socks.MTU)
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 builder.addDisallowedApplication(packageName)
@@ -522,18 +481,6 @@ class DnsttVpnService : VpnService() {
                 return
             }
             Log.d(TAG, "VPN interface established, app is excluded from routing")
-
-            if (!startDnsForwarding()) {
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    stateCallback?.invoke("error")
-                }
-                vpnInterface?.close()
-                vpnInterface = null
-                releaseWakeLock()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-                return
-            }
 
             // Wait for VPN routing to be fully active
             Thread.sleep(500)
@@ -604,8 +551,17 @@ class DnsttVpnService : VpnService() {
                 Log.d(TAG, "Tunnel verification passed")
             }
 
+            // Device traffic goes from the TUN into the tunnel's SOCKS5 proxy from here on
+            if (!Tun2Socks.start(this, vpnInterface!!.fd, proxyPort)) {
+                Log.e(TAG, "Failed to start tun2socks")
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    stateCallback?.invoke("error")
+                }
+                disconnect()
+                return
+            }
+
             isRunning.set(true)
-            shouldRun.set(true)
 
             // Update notification to connected state
             updateNotification("connected")
@@ -613,11 +569,6 @@ class DnsttVpnService : VpnService() {
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 stateCallback?.invoke("connected")
             }
-
-            runningThread = Thread {
-                runVpnLoop()
-            }
-            runningThread?.start()
 
             Log.d(TAG, "VPN connected successfully with ${if (transportType == "slipstream") "slipstream" else "dnstt"} tunnel")
 
@@ -630,282 +581,13 @@ class DnsttVpnService : VpnService() {
         }
     }
 
-    private fun runVpnLoop() {
-        val vpnFd = vpnInterface?.fileDescriptor ?: return
-        val inputStream = FileInputStream(vpnFd)
-        val outputStream = FileOutputStream(vpnFd)
-        val packet = ByteBuffer.allocate(32767)
-        var lastCleanup = System.currentTimeMillis()
-
-        try {
-            while (shouldRun.get()) {
-                val length = inputStream.channel.read(packet)
-                if (length > 0) {
-                    packet.flip()
-                    val packetBytes = ByteArray(length)
-                    packet.get(packetBytes)
-
-                    val ipHeader = IPv4Header.parse(packetBytes)
-                    if (ipHeader != null) {
-                        when (ipHeader.protocol) {
-                            6.toByte() -> processTcpPacket(ipHeader, outputStream)
-                            17.toByte() -> processUdpPacket(ipHeader, outputStream)
-                            1.toByte() -> {} // ICMP discarded silently
-                        }
-                    }
-
-                    packet.clear()
-                } else {
-                    Thread.sleep(1)
-                }
-
-                // Periodically clean up closed connections (every 10s)
-                val now = System.currentTimeMillis()
-                if (now - lastCleanup > 10000) {
-                    lastCleanup = now
-                    val closedKeys = tcpConnections.entries
-                        .filter { it.value.state == TcpConnection.State.CLOSED }
-                        .map { it.key }
-                    for (key in closedKeys) {
-                        tcpConnections.remove(key)
-                    }
-                    if (closedKeys.isNotEmpty()) {
-                        Log.d(TAG, "Cleaned up ${closedKeys.size} closed connections, active: ${tcpConnections.size}")
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            if (shouldRun.get()) {
-                Log.e(TAG, "VPN loop error", e)
-            }
-        } finally {
-            try {
-                inputStream.close()
-                outputStream.close()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error closing streams", e)
-            }
-        }
-    }
-
-    private fun processTcpPacket(ipHeader: IPv4Header, vpnOutput: FileOutputStream) {
-        val tcpHeader = TCPHeader.parse(ipHeader.payload) ?: return
-        val connectionId = "${ipHeader.sourceIp}:${tcpHeader.sourcePort}-${ipHeader.destinationIp}:${tcpHeader.destinationPort}"
-
-        if (tcpHeader.isSYN && !tcpHeader.isACK) {
-            // Skip if already being processed or already connected
-            if (tcpConnections.containsKey(connectionId) || !pendingConnections.add(connectionId)) {
-                return
-            }
-
-            val destHostAddress = ipHeader.destinationIp.hostAddress ?: run {
-                pendingConnections.remove(connectionId)
-                return
-            }
-            val clientSeqNum = tcpHeader.sequenceNumber
-
-            // Capture connection parameters for async processing
-            val srcIp = ipHeader.sourceIp
-            val srcPort = tcpHeader.sourcePort
-            val dstIp = ipHeader.destinationIp
-            val dstPort = tcpHeader.destinationPort
-
-            // Process SYN asynchronously to avoid blocking the VPN loop
-            // Uses semaphore to limit concurrent SOCKS5 handshakes through the tunnel
-            synExecutor.submit {
-                try {
-                    // Limit concurrent handshakes to avoid overwhelming the DNS tunnel
-                    if (!handshakeSemaphore.tryAcquire(10, java.util.concurrent.TimeUnit.SECONDS)) {
-                        Log.w(TAG, "Handshake queue full, dropping: $connectionId")
-                        return@submit
-                    }
-
-                    try {
-                        val socks5Client = Socks5Client(
-                            proxyHost,
-                            proxyPort,
-                            destHostAddress,
-                            dstPort
-                        )
-
-                        val tcpConnection = TcpConnection(
-                            sourceIp = srcIp,
-                            sourcePort = srcPort,
-                            destIp = dstIp,
-                            destPort = dstPort,
-                            vpnOutput = vpnOutput,
-                            socks5Client = socks5Client
-                        )
-
-                        if (tcpConnection.handleSyn(clientSeqNum)) {
-                            tcpConnections[connectionId] = tcpConnection
-                            Log.d(TAG, "New TCP connection: $connectionId")
-                        } else {
-                            Log.e(TAG, "Failed to establish connection: $connectionId")
-                        }
-                    } finally {
-                        handshakeSemaphore.release()
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error processing SYN for $connectionId", e)
-                } finally {
-                    pendingConnections.remove(connectionId)
-                }
-            }
-        } else if (tcpHeader.isFIN) {
-            tcpConnections[connectionId]?.handleFin(tcpHeader.sequenceNumber)
-            tcpConnections.remove(connectionId)
-        } else if (tcpHeader.isRST) {
-            tcpConnections[connectionId]?.close()
-            tcpConnections.remove(connectionId)
-        } else if (tcpHeader.isACK) {
-            // ACK packet (possibly with data)
-            tcpConnections[connectionId]?.handleAck(
-                tcpHeader.sequenceNumber,
-                tcpHeader.acknowledgmentNumber,
-                tcpHeader.payload
-            )
-        }
-    }
-
-
-    private fun processUdpPacket(ipHeader: IPv4Header, vpnOutput: FileOutputStream) {
-        val udpHeader = UDPHeader.parse(ipHeader.payload) ?: return
-
-        // Only handle DNS queries (port 53)
-        if (udpHeader.destinationPort != 53) {
-            Log.d(TAG, "Non-DNS UDP packet discarded (port ${udpHeader.destinationPort})")
-            return
-        }
-
-        Log.d(TAG, "DNS query from ${ipHeader.sourceIp}:${udpHeader.sourcePort} to ${ipHeader.destinationIp}:53")
-
-        val target = dnsTarget ?: return
-        // A full queue drops the query; the device's resolver retries
-        dnsExecutor.execute {
-            try {
-                // Create a protected UDP socket to bypass VPN
-                val responseData = DatagramSocket().use { dnsSocket ->
-                    protect(dnsSocket)
-                    dnsSocket.soTimeout = 5000 // 5 second timeout
-                    dnsSocket.send(DatagramPacket(udpHeader.payload, udpHeader.payload.size, target))
-
-                    // Receive DNS response
-                    val responseBuffer = ByteArray(4096)
-                    val responsePacket = DatagramPacket(responseBuffer, responseBuffer.size)
-                    dnsSocket.receive(responsePacket)
-                    responseBuffer.copyOf(responsePacket.length)
-                }
-                Log.d(TAG, "DNS response received: ${responseData.size} bytes")
-
-                // Build response packet
-                val responseUdp = UDPHeader(
-                    sourcePort = 53,
-                    destinationPort = udpHeader.sourcePort,
-                    length = 8 + responseData.size,
-                    checksum = 0,
-                    payload = responseData
-                )
-
-                val responseIp = IPv4Header(
-                    version = 4,
-                    ihl = 5,
-                    totalLength = 20 + 8 + responseData.size,
-                    identification = ipHeader.identification + 1,
-                    flags = 0,
-                    fragmentOffset = 0,
-                    ttl = 64,
-                    protocol = 17, // UDP
-                    headerChecksum = 0,
-                    sourceIp = ipHeader.destinationIp,
-                    destinationIp = ipHeader.sourceIp,
-                    payload = responseUdp.toByteArray(ipHeader.destinationIp, ipHeader.sourceIp)
-                )
-
-                val fullPacket = responseIp.toByteArrayForUdp()
-                synchronized(vpnOutput) {
-                    vpnOutput.write(fullPacket)
-                    vpnOutput.flush()
-                }
-                Log.d(TAG, "DNS response sent back to client")
-
-            } catch (e: Exception) {
-                Log.e(TAG, "DNS forwarding failed", e)
-            }
-        }
-    }
-
-    private fun newDnsExecutor() = ThreadPoolExecutor(
-        4, 4, 30, TimeUnit.SECONDS, ArrayBlockingQueue(64), ThreadPoolExecutor.DiscardPolicy()
-    ).apply { allowCoreThreadTimeOut(true) }
-
-    /**
-     * Chooses where device DNS queries go: the resolver's own address for a plain UDP
-     * resolver, or a local bridge that forwards them over DoH/DoT (plain UDP to an
-     * encrypted resolver's address would expose every query). Replaced by tun2socks
-     * DNS handling later.
-     */
-    private fun startDnsForwarding(): Boolean {
-        stopDnsForwarding()
-        return try {
-            when (Mobile.resolverKind(dnsServer)) {
-                "udp" -> {
-                    val addr = Mobile.udpResolverAddr(dnsServer)
-                    val colon = addr.lastIndexOf(':')
-                    val host = addr.substring(0, colon).removePrefix("[").removeSuffix("]")
-                    dnsTarget = InetSocketAddress(host, addr.substring(colon + 1).toInt())
-                }
-                "doh", "dot" -> {
-                    val bridge = Mobile.startBridge(dnsServer, resolverOptions.bootstrap, resolverOptions.tlsFingerprint)
-                    dnsBridge = bridge
-                    dnsTarget = InetSocketAddress(InetAddress.getLoopbackAddress(), bridge.port().toInt())
-                }
-                else -> {
-                    Log.e(TAG, "Invalid DNS server: $dnsServer")
-                    return false
-                }
-            }
-            Log.d(TAG, "Device DNS goes to $dnsTarget")
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to set up DNS forwarding for $dnsServer", e)
-            stopDnsForwarding()
-            false
-        }
-    }
-
-    private fun stopDnsForwarding() {
-        dnsTarget = null
-        dnsBridge?.let { bridge ->
-            try {
-                bridge.stop()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error stopping DNS bridge", e)
-            }
-        }
-        dnsBridge = null
-    }
-
     private fun disconnect() {
         Log.d(TAG, "Disconnecting VPN")
 
-        shouldRun.set(false)
-
         stateCallback?.invoke("disconnecting")
 
-        runningThread?.interrupt()
-        runningThread = null
-
-        // Cancel pending SYN processing
-        pendingConnections.clear()
-        synExecutor.shutdownNow()
-        synExecutor = Executors.newFixedThreadPool(16)
-        dnsExecutor.shutdownNow()
-        dnsExecutor = newDnsExecutor()
-        stopDnsForwarding()
-
-        tcpConnections.values.forEach { it.close() }
-        tcpConnections.clear()
+        // The engine reads the TUN fd: stop it before closing the interface
+        Tun2Socks.stop(this)
 
         try {
             vpnInterface?.close()
@@ -1072,258 +754,5 @@ class DnsttVpnService : VpnService() {
     override fun onRevoke() {
         disconnect()
         super.onRevoke()
-    }
-}
-
-data class IPv4Header(
-    val version: Int,
-    val ihl: Int,
-    val totalLength: Int,
-    val identification: Int,
-    val flags: Int,
-    val fragmentOffset: Int,
-    val ttl: Int,
-    val protocol: Byte,
-    var headerChecksum: Int,
-    val sourceIp: InetAddress,
-    val destinationIp: InetAddress,
-    val payload: ByteArray
-) {
-    companion object {
-        fun parse(data: ByteArray): IPv4Header? {
-            if (data.size < 20) return null
-            val buffer = ByteBuffer.wrap(data)
-            
-            val versionAndIhl = buffer.get().toInt()
-            val version = versionAndIhl shr 4
-            val ihl = versionAndIhl and 0x0F
-            if (ihl < 5) return null
-
-            buffer.get() // DSCP & ECN
-            val totalLength = buffer.short.toInt() and 0xFFFF
-            val identification = buffer.short.toInt() and 0xFFFF
-            val flagsAndFragment = buffer.short.toInt() and 0xFFFF
-            val flags = flagsAndFragment shr 13
-            val fragmentOffset = flagsAndFragment and 0x1FFF
-            val ttl = buffer.get().toInt() and 0xFF
-            val protocol = buffer.get()
-            val headerChecksum = buffer.short.toInt() and 0xFFFF
-
-            val sourceIpBytes = ByteArray(4)
-            buffer.get(sourceIpBytes)
-            val sourceIp = InetAddress.getByAddress(sourceIpBytes)
-
-            val destIpBytes = ByteArray(4)
-            buffer.get(destIpBytes)
-            val destinationIp = InetAddress.getByAddress(destIpBytes)
-            
-            val payload = data.copyOfRange(ihl * 4, totalLength)
-
-            return IPv4Header(
-                version, ihl, totalLength, identification, flags,
-                fragmentOffset, ttl, protocol, headerChecksum, sourceIp, destinationIp, payload
-            )
-        }
-    }
-    
-    fun buildPacket(tcpHeader: TCPHeader): ByteArray {
-         val ipHeaderBytes = toByteArray()
-         val tcpHeaderBytes = tcpHeader.toByteArray(sourceIp, destinationIp)
-         return ipHeaderBytes + tcpHeaderBytes
-    }
-
-    fun toByteArrayForUdp(): ByteArray {
-        val ipHeaderSize = ihl * 4
-        val buffer = ByteBuffer.allocate(ipHeaderSize)
-        buffer.put(((version shl 4) or ihl).toByte())
-        buffer.put(0) // DSCP & ECN
-        buffer.putShort(totalLength.toShort())
-        buffer.putShort(identification.toShort())
-        buffer.putShort(((flags shl 13) or fragmentOffset).toShort())
-        buffer.put(ttl.toByte())
-        buffer.put(protocol)
-        buffer.putShort(0) // Checksum placeholder
-        buffer.put(sourceIp.address)
-        buffer.put(destinationIp.address)
-
-        // Calculate IP header checksum
-        val array = buffer.array()
-        val checksum = calculateChecksum(array, 0, ipHeaderSize)
-        buffer.putShort(10, checksum.toShort())
-
-        return array + payload
-    }
-
-    private fun toByteArray(): ByteArray {
-        val buffer = ByteBuffer.allocate(ihl * 4)
-        buffer.put(((version shl 4) or ihl).toByte())
-        buffer.put(0) // DSCP & ECN
-        buffer.putShort(totalLength.toShort())
-        buffer.putShort(identification.toShort())
-        buffer.putShort(((flags shl 13) or fragmentOffset).toShort())
-        buffer.put(ttl.toByte())
-        buffer.put(protocol)
-        buffer.putShort(0) // Checksum placeholder
-
-        buffer.put(sourceIp.address)
-        buffer.put(destinationIp.address)
-
-        // Calculate checksum
-        val array = buffer.array()
-        val checksum = calculateChecksum(array, 0, buffer.position())
-        buffer.putShort(10, checksum.toShort())
-
-        return array
-    }
-}
-
-data class TCPHeader(
-    val sourcePort: Int,
-    val destinationPort: Int,
-    val sequenceNumber: Long,
-    val acknowledgmentNumber: Long,
-    val dataOffset: Int,
-    val flags: Int,
-    val windowSize: Int,
-    var checksum: Int,
-    val urgentPointer: Int,
-    val payload: ByteArray
-) {
-    companion object {
-        const val FLAG_FIN = 1
-        const val FLAG_SYN = 2
-        const val FLAG_RST = 4
-        const val FLAG_PSH = 8
-        const val FLAG_ACK = 16
-        const val FLAG_URG = 32
-
-        fun parse(data: ByteArray): TCPHeader? {
-            if (data.size < 20) return null
-            val buffer = ByteBuffer.wrap(data)
-
-            val sourcePort = buffer.short.toInt() and 0xFFFF
-            val destinationPort = buffer.short.toInt() and 0xFFFF
-            val sequenceNumber = buffer.int.toLong() and 0xFFFFFFFF
-            val acknowledgmentNumber = buffer.int.toLong() and 0xFFFFFFFF
-            val dataOffsetAndFlags = buffer.short.toInt() and 0xFFFF
-            val dataOffset = (dataOffsetAndFlags shr 12) and 0xF
-            val flags = dataOffsetAndFlags and 0x1FF
-            val windowSize = buffer.short.toInt() and 0xFFFF
-            val checksum = buffer.short.toInt() and 0xFFFF
-            val urgentPointer = buffer.short.toInt() and 0xFFFF
-
-            val payload = data.copyOfRange(dataOffset * 4, data.size)
-
-            return TCPHeader(
-                sourcePort, destinationPort, sequenceNumber, acknowledgmentNumber,
-                dataOffset, flags, windowSize, checksum, urgentPointer, payload
-            )
-        }
-    }
-    
-    val isFIN: Boolean get() = (flags and FLAG_FIN) != 0
-    val isSYN: Boolean get() = (flags and FLAG_SYN) != 0
-    val isRST: Boolean get() = (flags and FLAG_RST) != 0
-    val isACK: Boolean get() = (flags and FLAG_ACK) != 0
-
-    fun toByteArray(sourceIp: InetAddress, destIp: InetAddress): ByteArray {
-        val tcpLength = (dataOffset * 4) + payload.size
-        val buffer = ByteBuffer.allocate(tcpLength)
-
-        buffer.putShort(sourcePort.toShort())
-        buffer.putShort(destinationPort.toShort())
-        buffer.putInt(sequenceNumber.toInt())
-        buffer.putInt(acknowledgmentNumber.toInt())
-        buffer.putShort(((dataOffset shl 12) or flags).toShort())
-        buffer.putShort(windowSize.toShort())
-        buffer.putShort(0) // Checksum placeholder
-        buffer.putShort(urgentPointer.toShort())
-        buffer.put(payload)
-
-        // Calculate checksum
-        val array = buffer.array()
-        val pseudoHeader = createPseudoHeader(sourceIp, destIp, tcpLength)
-        val checksum = calculateChecksum(pseudoHeader + array, 0, pseudoHeader.size + array.size)
-        buffer.putShort(16, checksum.toShort())
-
-        return array
-    }
-    
-     private fun createPseudoHeader(sourceIp: InetAddress, destIp: InetAddress, tcpLength: Int): ByteArray {
-        val buffer = ByteBuffer.allocate(12)
-        buffer.put(sourceIp.address)
-        buffer.put(destIp.address)
-        buffer.put(0.toByte())
-        buffer.put(6.toByte()) // Protocol TCP
-        buffer.putShort(tcpLength.toShort())
-        return buffer.array()
-    }
-}
-
-fun calculateChecksum(data: ByteArray, offset: Int, length: Int): Int {
-    var sum = 0
-    var i = offset
-    while (i < length - 1) {
-        val word = ((data[i].toInt() and 0xFF) shl 8) or (data[i + 1].toInt() and 0xFF)
-        sum += word
-        i += 2
-    }
-    if (length % 2 != 0) {
-        sum += (data[length - 1].toInt() and 0xFF) shl 8
-    }
-    while (sum shr 16 > 0) {
-        sum = (sum and 0xFFFF) + (sum shr 16)
-    }
-    return sum.inv() and 0xFFFF
-}
-
-data class UDPHeader(
-    val sourcePort: Int,
-    val destinationPort: Int,
-    val length: Int,
-    var checksum: Int,
-    val payload: ByteArray
-) {
-    companion object {
-        fun parse(data: ByteArray): UDPHeader? {
-            if (data.size < 8) return null
-            val buffer = ByteBuffer.wrap(data)
-
-            val sourcePort = buffer.short.toInt() and 0xFFFF
-            val destinationPort = buffer.short.toInt() and 0xFFFF
-            val length = buffer.short.toInt() and 0xFFFF
-            val checksum = buffer.short.toInt() and 0xFFFF
-
-            val payload = if (data.size > 8) data.copyOfRange(8, minOf(length, data.size)) else ByteArray(0)
-
-            return UDPHeader(sourcePort, destinationPort, length, checksum, payload)
-        }
-    }
-
-    fun toByteArray(sourceIp: InetAddress, destIp: InetAddress): ByteArray {
-        val buffer = ByteBuffer.allocate(8 + payload.size)
-        buffer.putShort(sourcePort.toShort())
-        buffer.putShort(destinationPort.toShort())
-        buffer.putShort((8 + payload.size).toShort())
-        buffer.putShort(0) // Checksum placeholder
-        buffer.put(payload)
-
-        // Calculate UDP checksum with pseudo-header
-        val array = buffer.array()
-        val pseudoHeader = createUdpPseudoHeader(sourceIp, destIp, 8 + payload.size)
-        val checksum = calculateChecksum(pseudoHeader + array, 0, pseudoHeader.size + array.size)
-        buffer.putShort(6, checksum.toShort())
-
-        return array
-    }
-
-    private fun createUdpPseudoHeader(sourceIp: InetAddress, destIp: InetAddress, udpLength: Int): ByteArray {
-        val buffer = ByteBuffer.allocate(12)
-        buffer.put(sourceIp.address)
-        buffer.put(destIp.address)
-        buffer.put(0.toByte())
-        buffer.put(17.toByte()) // Protocol UDP
-        buffer.putShort(udpLength.toShort())
-        return buffer.array()
     }
 }

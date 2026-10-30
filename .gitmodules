@@ -1,3 +1,6 @@
 [submodule "vendor/slipstream-rust"]
 	path = vendor/slipstream-rust
 	url = https://github.com/Mygod/slipstream-rust.git
+[submodule "vendor/hev-socks5-tunnel"]
+	path = vendor/hev-socks5-tunnel
+	url = https://github.com/heiher/hev-socks5-tunnel

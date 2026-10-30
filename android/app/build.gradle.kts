@@ -20,6 +20,9 @@ fun signingValue(property: String, environment: String): String? =
 
 val releaseStoreFile = signingValue("storeFile", "ANDROID_KEYSTORE_FILE")
 
+// hev-socks5-tunnel (tun2socks engine for VPN mode) is a git submodule
+val hevDir = rootProject.file("../vendor/hev-socks5-tunnel")
+
 repositories {
     flatDir {
         dirs("libs")
@@ -49,6 +52,32 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        externalNativeBuild {
+            ndkBuild {
+                // Only the JNI library; the module also defines a standalone executable
+                targets += "hev-socks5-tunnel"
+                // JNI_OnLoad registers the natives on xyz.dnstt.app.TProxyService. The prefix
+                // map keeps the checkout path out of the library.
+                cFlags += listOf(
+                    "-DPKGNAME=xyz/dnstt/app",
+                    "-DCLSNAME=TProxyService",
+                    "-O3",
+                    "-ffile-prefix-map=${rootProject.projectDir.parentFile.absolutePath}=."
+                )
+            }
+        }
+    }
+
+    externalNativeBuild {
+        // The Flutter plugin points cmake at an empty project so that AGP installs the NDK;
+        // AGP allows one native build, and this one needs the NDK anyway.
+        cmake {
+            path = null
+        }
+        ndkBuild {
+            path = hevDir.resolve("Android.mk")
+        }
     }
 
     signingConfigs {
@@ -106,6 +135,11 @@ tasks.named("preBuild") {
     doFirst {
         if (!dnsttAar.exists()) {
             throw GradleException("android/app/libs/dnstt.aar is missing: run scripts/build_aar.sh")
+        }
+        if (!hevDir.resolve("third-part/lwip/Android.mk").exists()) {
+            throw GradleException(
+                "vendor/hev-socks5-tunnel is missing: run git submodule update --init --recursive vendor/hev-socks5-tunnel"
+            )
         }
     }
 }

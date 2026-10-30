@@ -21,6 +21,8 @@ The app uses:
 - **Kotlin** for Android VPN service implementation
 - **Go (gomobile)** for the DNSTT tunnel client library (source in `go_src/`)
 - **Rust** for the Slipstream tunnel client (source in `vendor/slipstream-rust/` submodule)
+- **C** for the tun2socks engine of the Android VPN mode (hev-socks5-tunnel, source in
+  `vendor/hev-socks5-tunnel/` submodule, built by Gradle)
 
 ### How DNSTT Works
 
@@ -33,7 +35,7 @@ DNSTT tunnels data through DNS queries. The protocol stack:
 
 Traffic flow:
 ```
-App Traffic → TUN Interface → TCP State Machine → SOCKS5 → dnstt tunnel → DNS queries → Server
+App Traffic → TUN Interface → tun2socks → SOCKS5 → dnstt tunnel → DNS queries → Server
 ```
 
 ### How Slipstream Works
@@ -47,7 +49,7 @@ Slipstream tunnels data through QUIC-over-DNS, providing significantly higher th
 
 Traffic flow:
 ```
-App Traffic → TUN Interface → TCP State Machine → slipstream-client → DNS queries (QUIC) → Server
+App Traffic → TUN Interface → tun2socks → slipstream-client → DNS queries (QUIC) → Server
 ```
 
 The `slipstream-client` binary runs as a subprocess (not a library). It listens on a local TCP port and forwards connections through the QUIC-over-DNS tunnel. The DNS server from the app's DNS server list is passed as the `--resolver` argument; for a DoH/DoT server the client gets a local UDP→DoH/DoT bridge (`127.0.0.1:<port>`) instead.
@@ -87,13 +89,14 @@ dnstt_app/
 │       │   │       └── libslipstream_client.so  # Slipstream binary for Android
 │       │   └── kotlin/xyz/dnstt/app/
 │       │       ├── MainActivity.kt      # Flutter platform channel bridge
-│       │       ├── DnsttVpnService.kt   # Android VPN service + packet handling
+│       │       ├── DnsttVpnService.kt   # Android VPN service (TUN, tunnel client, tun2socks)
+│       │       ├── Tun2Socks.kt         # tun2socks engine config, start/stop
+│       │       ├── TProxyService.kt     # JNI entry points of libhev-socks5-tunnel.so
 │       │       ├── SlipstreamBridge.kt  # Slipstream subprocess manager (Android)
 │       │       ├── ResolverOptions.kt   # DoH/DoT bootstrap and TLS fingerprint
-│       │       ├── SlipstreamProxyService.kt  # Slipstream proxy foreground service
-│       │       ├── TcpConnection.kt     # TCP state machine for VPN
-│       │       └── Socks5Client.kt      # SOCKS5 proxy client
-│       └── build.gradle.kts
+│       │       └── SlipstreamProxyService.kt  # Slipstream proxy foreground service
+│       ├── proguard-rules.pro           # keeps TProxyService for the JNI library
+│       └── build.gradle.kts             # also builds hev-socks5-tunnel (ndkBuild)
 ├── go_src/                              # Go dnstt library source (included in repo)
 │   ├── client/                          # Tunnel client: resolver specs, UDP/DoH/DoT transports,
 │   │                                    #   uTLS, KCP/Noise/smux tunnel, probe, UDP→DoH/DoT bridge
@@ -110,7 +113,8 @@ dnstt_app/
 │   ├── go.mod
 │   └── go.sum
 ├── vendor/
-│   └── slipstream-rust/                 # Slipstream source (git submodule)
+│   ├── slipstream-rust/                 # Slipstream source (git submodule)
+│   └── hev-socks5-tunnel/               # tun2socks engine for VPN mode (git submodule)
 ├── lib/
 │   ├── main.dart                        # App entry point
 │   ├── screens/
@@ -194,6 +198,23 @@ so a release APK built on a developer machine carries the user's path: build rel
 | `android/arm64` | ARM64 (64-bit) | Modern Android phones |
 | `android/386` | x86 (32-bit) | Old emulators (not built: Flutter has no x86 build) |
 | `android/amd64` | x86_64 (64-bit) | Modern emulators, Chromebooks |
+
+## Building the tun2socks engine
+
+Gradle builds `libhev-socks5-tunnel.so` for every ABI from the submodule (`externalNativeBuild`
+with `ndkBuild`, NDK 28.2.13676358); it has to be checked out with its own submodules:
+
+```bash
+git submodule update --init --recursive vendor/hev-socks5-tunnel
+```
+
+- Pinned to a release tag of hev-socks5-tunnel; to update, check out a newer tag in the
+  submodule, read the changes, run the Kotlin tests and a debug build, and commit the new
+  submodule commit.
+- Built with `-DPKGNAME=xyz/dnstt/app -DCLSNAME=TProxyService` (the JNI class) and
+  `-ffile-prefix-map=<repo>=.` (no checkout path in the library); about 0.3 MB per ABI.
+- The Flutter Gradle plugin points `externalNativeBuild.cmake` at an empty project to make AGP
+  install the NDK; AGP allows one native build, so `build.gradle.kts` clears it.
 
 ## Building the Flutter App
 
@@ -352,13 +373,29 @@ storeFile=<absolute path to dnstt-release.jks>
 ### DnsttVpnService.kt
 
 The Android VPN service that:
-- Creates TUN interface for capturing traffic
-- Excludes the app itself from VPN routing (so dnstt UDP packets bypass VPN)
-- Processes IP packets from TUN
-- Routes TCP through SOCKS5 proxy (DNSTT or Slipstream tunnel)
-- Handles device DNS queries: the TUN announces the virtual DNS server `198.18.0.2`; queries go to
-  the resolver over UDP, or for a DoH/DoT resolver through a local bridge (`Mobile.startBridge`)
-- Processes SYN packets asynchronously (thread pool) to avoid blocking the VPN loop during Slipstream's slower SOCKS5 handshake through the DNS tunnel
+- Creates the TUN interface: `198.18.0.1/32` and `fc00::1/128`, routes `0.0.0.0/0` and `::/0`
+  (no IPv6 bypasses the VPN), DNS server `198.18.0.2`, MTU 8500
+- Excludes the app itself from VPN routing (so the tunnel client's packets bypass the VPN)
+- Starts the tunnel client (DNSTT, Slipstream; SSH mode uses the proxy MainActivity started),
+  verifies it with an HTTP request through its SOCKS5 port, then starts the tun2socks engine on
+  the TUN fd (`Tun2Socks`)
+- On disconnect or revoke stops the engine before closing the TUN, then the tunnel client
+
+### Tun2Socks.kt / TProxyService.kt
+
+The tun2socks engine of the VPN mode, hev-socks5-tunnel (`vendor/hev-socks5-tunnel`, MIT; lwIP
+inside), runs as a native thread in the app process and reads the TUN fd:
+- TCP from the device becomes a SOCKS5 CONNECT to `127.0.0.1:<proxy port>` (the tunnel client,
+  or `Socks5AuthRelay` in front of it)
+- DNS to `198.18.0.2:53` is answered by the engine (mapdns): an `A` query gets a fake address
+  from `198.18.128.0/17`, every other type an empty answer. A connection to a fake address
+  becomes a CONNECT by host name, so the server side resolves names and no device DNS query
+  leaves the phone. Apps that need `SRV`/`TXT`/`MX` records or real addresses do not work.
+- Other UDP goes out as SOCKS5 UDP ASSOCIATE, which most upstream proxies refuse
+- `Tun2Socks.config()` writes the YAML config (unit-tested in `Tun2SocksTest`); the engine logs
+  warnings to `cacheDir/tun2socks.log`, copied to logcat (tag `Tun2Socks`) on stop
+- `TProxyService` holds the JNI functions; `JNI_OnLoad` registers them on that class name, so
+  `proguard-rules.pro` keeps it from R8. One engine per process.
 
 ### SlipstreamBridge.kt
 
@@ -368,8 +405,7 @@ Android Slipstream manager that:
 - Manages lifecycle (start/stop/isRunning)
 - Passes the DNS server's `host:port` as `--resolver`; for a DoH/DoT server it starts a local
   bridge (`Mobile.startBridge`) and passes `127.0.0.1:<port>`, stopping the bridge with the
-  subprocess. In VPN mode `DnsttVpnService` hands it the bridge it already runs for device DNS
-  (one connection to the resolver)
+  subprocess (in every mode)
 
 ### SlipstreamProxyService.kt
 
@@ -383,7 +419,7 @@ Local SOCKS5 relay used when the SOCKS5 proxy behind the tunnel server requires
 username/password authentication (RFC 1929):
 - The tunnel client (dnstt or slipstream) listens on a free localhost port; the relay takes the
   user-facing address (`127.0.0.1:<port>`, or `0.0.0.0:<port>` with proxy sharing)
-- Local clients (VPN TCP stack, tunnel verification, DNS tests, other apps) connect without auth;
+- Local clients (tun2socks engine, tunnel verification, DNS tests, other apps) connect without auth;
   the relay authenticates upstream and passes the rest of the stream through unchanged
 - The relay reads the client's request and sends the upstream greeting, credentials and request
   in one write, so auth adds no round trip through the DNS tunnel
@@ -392,14 +428,6 @@ username/password authentication (RFC 1929):
   the relay retries the connection step by step and keeps that mode for later connections
 - Kotlin version for Android (VPN, proxy services, DNS tests), Dart version for desktop
 - Desktop DNSTT DNS tests authenticate in Go (`dnstt_test_dns_server_auth` in `go_src/desktop`)
-
-### TcpConnection.kt
-
-TCP state machine that:
-- Handles SYN/ACK/FIN handshakes
-- Tracks sequence/acknowledgment numbers
-- Forwards data to SOCKS5 proxy
-- Sends responses back through TUN
 
 ### mobile.go and the client package (Go)
 
@@ -483,7 +511,7 @@ adb shell getprop ro.product.cpu.abi
 adb install -r build/app/outputs/flutter-apk/app-debug.apk
 
 # View logs
-adb logcat | grep -E "(DnsttVpnService|flutter|dnstt)"
+adb logcat | grep -E "(DnsttVpnService|Tun2Socks|flutter|dnstt)"
 
 # Clear logs and watch
 adb logcat -c && adb logcat | grep DnsttVpnService
@@ -493,6 +521,10 @@ adb logcat -c && adb logcat | grep DnsttVpnService
 
 ### dnstt.aar is missing
 Gradle stops with `android/app/libs/dnstt.aar is missing`: run `./scripts/build_aar.sh`.
+
+### vendor/hev-socks5-tunnel is missing
+Gradle stops with this message when the submodule is not checked out:
+`git submodule update --init --recursive vendor/hev-socks5-tunnel`.
 
 ### AAR build fails with NDK error
 ```bash
@@ -537,8 +569,9 @@ The dnstt UDP socket may get routed through the VPN despite app exclusion. The c
 ```bash
 # === FULL BUILD FROM SCRATCH ===
 
-# 1. Build Go library (from project root)
+# 1. Build Go library (from project root) and fetch the tun2socks engine
 ./scripts/build_aar.sh
+git submodule update --init --recursive vendor/hev-socks5-tunnel
 
 # 2. Build Flutter app
 flutter clean

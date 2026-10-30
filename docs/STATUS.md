@@ -28,6 +28,8 @@ environment details, servers, credentials or other personal data.
       see below).
   12. Stage 4: DoH and DoT for Slipstream (`docs/STAGE4_SLIPSTREAM_DOH_DOT.md`,
       see below).
+  13. Stage 5: tun2socks (hev-socks5-tunnel) in VPN mode
+      (`docs/STAGE5_TUN2SOCKS.md`, see below).
 - No pull requests are open yet. GitHub Actions are enabled in the fork, and
   the four signing secrets are set. No release has been made yet; the user
   will say when they want one.
@@ -188,7 +190,8 @@ Solution:
   tests) passes spec, bootstrap and fingerprint (`ResolverOptions.kt`). VPN
   mode announces `198.18.0.2` as the device's DNS server and forwards queries
   through a bounded executor to the UDP resolver or, for DoH/DoT, to a local
-  bridge; the tunnel client's sockets are also protected.
+  bridge (replaced by tun2socks in stage 5); the tunnel client's sockets are
+  also protected.
 - Desktop: FFI binds the stage 2 exports lazily; DoH/DoT needs a current
   `libdnstt`.
 - Slipstream gets `host:port` from the spec (ports and IPv6 now work); DoH/DoT
@@ -201,19 +204,19 @@ Solution:
   it, so `Probe` returned a plain timeout instead of `DeadlineExceeded`
   (about 1 in 15 runs). Fixed in `client/probe.go`; 30 runs in a row pass.
 - Not yet checked live (the user has no test server available for now): DNSTT
-  over DoH and DoT in VPN and proxy modes, VPN-mode device DNS through the
-  bridge, desktop.
+  over DoH and DoT in VPN and proxy modes, desktop.
 
 ## Done: DoH and DoT for Slipstream (stage 4)
 
 - `slipstream-client` speaks only UDP; for a DoH/DoT server it gets a local
   bridge (`127.0.0.1:<port>`) that lives as long as the subprocess. Android:
   `SlipstreamBridge` starts it (`Mobile.startBridge`) for proxy mode and DNS
-  tests; in VPN mode `DnsttVpnService` passes the bridge it already runs for
-  device DNS (one connection to the resolver). The Slipstream channel calls
-  and intents carry `ResolverOptions`. Desktop: `SlipstreamService` starts the
-  bridge through FFI (`dnstt_bridge_start`, bound lazily, run in another
-  isolate) and reports "library too old" without it. The DoH/DoT refusals are
+  tests; in VPN mode `DnsttVpnService` passed the bridge it ran for device
+  DNS until stage 5, now Slipstream starts its own there too. The Slipstream
+  channel calls and intents carry `ResolverOptions`. Desktop:
+  `SlipstreamService` starts the bridge through FFI (`dnstt_bridge_start`,
+  bound lazily, run in another isolate) and reports "library too old"
+  without it. The DoH/DoT refusals are
   gone.
 - Read in `vendor/slipstream-rust`: answers are assigned to a resolver by their
   source address; in recursive mode the client ignores DNS IDs. The bridge
@@ -238,6 +241,41 @@ Solution:
 - Not checked live (needs the user's server): Slipstream over real DoH/DoT
   resolvers on Android and desktop, throughput and HTTP 429 rate limits of
   public resolvers.
+
+## Done: tun2socks in VPN mode (stage 5)
+
+- `vendor/hev-socks5-tunnel` (submodule, tag 2.19.3, MIT; lwIP BSD) replaces the
+  hand-written stack: `TcpConnection.kt`, `Socks5Client.kt`, the packet loop,
+  the header classes and the device-DNS forwarding are gone
+  (`DnsttVpnService.kt` 1328 → about 760 lines). 2.9.x had no fake-IP DNS;
+  mapdns came with the 2.1x releases.
+- Gradle builds `libhev-socks5-tunnel.so` for every ABI (`ndkBuild`, about
+  0.3 MB per ABI, 16 KB pages, `-ffile-prefix-map`); the path check on the
+  APK passes. The Flutter plugin's empty cmake project ("forceNdkDownload")
+  clashes with a second native build and is cleared in `build.gradle.kts`.
+  `preBuild` stops with the submodule command if it is missing. CI fetches
+  the submodule in the test and APK jobs; `release.yml` already checks out
+  submodules recursively.
+- VPN: `198.18.0.1/32` + `fc00::1/128`, routes `0.0.0.0/0` and `::/0`, DNS
+  `198.18.0.2` answered by mapdns (fake `A` from `198.18.128.0/17`, empty
+  answers for other types), MTU 8500, non-blocking fd, offloads off. The
+  engine starts after the tunnel verification and stops before the TUN
+  closes. Slipstream in VPN mode starts its own DoH/DoT bridge again
+  (`SlipstreamBridge`), as in proxy mode.
+- `Tun2Socks.kt` (config, start/stop, engine log to `cacheDir`, copied to
+  logcat on stop), `TProxyService.kt` (JNI; kept by `proguard-rules.pro`).
+- Closes review items 1 (IPv6 leak), 2 (device DNS outside the tunnel) and
+  "Simplified TCP implementation" of `docs/CODE_REVIEW.md`.
+- Tests: `Tun2SocksTest` (5 tests, config text); Kotlin and Dart tests pass;
+  debug and release APKs build. In the session, hev built for Linux ran on a
+  TUN in a network namespace with the same config against a local SOCKS5
+  server: fake `A`, empty `AAAA`/`TXT`, HTTP by fake address (CONNECT by host
+  name) and by IPv4 literal, UDP as UDP ASSOCIATE refused cleanly. IPv6 could
+  not be run (no IPv6 in the container).
+- Not checked live (needs the user's server and phone): browsing, downloads,
+  a messenger, IPv6 and DNS leak tests, SSH mode, Slipstream and DNSTT, with
+  and without upstream auth, DoH/DoT; load from UDP ASSOCIATE tries (QUIC)
+  and from many parallel CONNECTs without the old limit of three handshakes.
 
 ## Next steps
 
@@ -271,7 +309,8 @@ Solution:
    PR, so upstream does not get a relay that lends the upstream account to the
    LAN.
 3. **Fixes from `docs/CODE_REVIEW.md`**, in this order:
-   1. IPv6 leak in VPN mode and device DNS queries bypassing the tunnel.
+   1. ~~IPv6 leak in VPN mode and device DNS queries bypassing the tunnel.~~
+      Done in stage 5.
    2. "Share proxy" exposes an open SOCKS5 proxy to the LAN. Now more
       important: with upstream auth, the relay on `0.0.0.0` lends the upstream
       account to anyone on the network. Add local auth for shared mode.
@@ -280,37 +319,38 @@ Solution:
    4. CI: add `flutter analyze` and the full `flutter test` after fixing or
       replacing the stale `test/widget_test.dart`; `go vet ./...` fails on
       upstream tests in `go_src/noise`.
-   5. Replace the hand-written TCP stack with a tun2socks implementation.
-   6. DoH/DoT transport in the DNSTT mobile library.
+   5. ~~Replace the hand-written TCP stack with a tun2socks implementation.~~
+      Done in stage 5.
+   6. ~~DoH/DoT transport in the DNSTT mobile library.~~ Done in stages 2–4.
 4. **DoH/DoT and tun2socks**: designed in `docs/DOH_DOT_TUN2SOCKS_PLAN.md`
    (covers 3.1, 3.3, 3.5 and 3.6). Order: build the Go library in CI, DoH/DoT in
    Go, then in the app for DNSTT, then Slipstream through a local UDP→DoH/DoT
    bridge, then tun2socks (hev-socks5-tunnel, fake-IP DNS, IPv6), then an
    optional tunnel-DNS mode. Stages 1 (Go library in CI), 2 (DoH/DoT in the
-   Go library), 3 (DoH/DoT for DNSTT in the app) and 4 (Slipstream over
-   DoH/DoT) are done; next is stage 5, tun2socks.
+   Go library), 3 (DoH/DoT for DNSTT in the app), 4 (Slipstream over
+   DoH/DoT) and 5 (tun2socks) are done; stage 6 (tunnel DNS mode) is
+   optional.
 5. **Live check of DoH/DoT** when the user has a server: DNSTT and Slipstream
    over a DoH and a DoT resolver, VPN and proxy modes, DNS tests, desktop;
    Slipstream throughput over DoH vs UDP and whether public resolvers answer
    HTTP 429.
+6. **Live check of the VPN mode with tun2socks** (stage 5, list above).
 
-## Resume here: stage 5 (tun2socks in VPN mode)
+## Resume here: after stage 5
 
-The next session starts stage 5 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md`
-(section 6, "Stage 5"; design in section 4). First write its plan as
-`docs/STAGE5_TUN2SOCKS.md`, then implement. Starting points:
+Stages 1–5 are done; none of them has been checked live yet. Options for the
+next session, for the user to choose:
 
-- Engine: hev-socks5-tunnel as a submodule at a pinned release tag, built by
-  Gradle `ndkBuild` for all ABIs, JNI class `xyz.dnstt.app.TProxyService`;
-  check its license (section 4.1) and the `.so` with
-  `scripts/check_binary_paths.sh` in CI.
-- `DnsttVpnService` today: hand-written TCP stack (`TcpConnection.kt`,
-  `Socks5Client.kt`, packet code), IPv4 only, device DNS through
-  `startDnsForwarding` (virtual DNS `198.18.0.2`, bridge for DoH/DoT, which
-  Slipstream shares). Stage 5 replaces all of it; Slipstream then needs its
-  own bridge again in VPN mode (`SlipstreamBridge` starts one when given the
-  DoH/DoT spec).
-- Live checks of stage 5 need a real server; the user tests later.
+- **First release** (next step 0) and live checks on the phone (steps 1, 5, 6):
+  stages 1–5 change the Go build, the resolvers and the whole VPN data path.
+- **Fix 3.2** (local auth for the shared proxy), also wanted before the
+  upstream pull request (step 2).
+- **Stage 6** (tunnel DNS mode, `docs/DOH_DOT_TUN2SOCKS_PLAN.md`): real DNS
+  answers of all types through the tunnel; its local gateway could also
+  answer UDP ASSOCIATE at once, should the live tests show load from QUIC
+  tries.
+- **3.3** (`libslipstream_client.so` built in CI, Slipstream for all ABIs) or
+  **3.4** (`flutter analyze` and the full `flutter test` in CI).
 
 ## Working notes
 
@@ -342,6 +382,13 @@ The next session starts stage 5 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md`
   the client fails with "Address family not supported": patch the copy (UDP
   socket on `0.0.0.0`, no IPv4-mapped addresses in
   `normalize_dual_stack_addr`) before running `TestSlipstreamOverBridge`.
+- hev-socks5-tunnel for Linux: `make` in a copy of the submodule in the
+  scratchpad (a few seconds). The container has `/dev/net/tun` and root;
+  `unshare -n` gives a network namespace, `ip` comes from `apt-get install
+  iproute2`. hev opens `AF_INET6` sockets only; without IPv6 an `LD_PRELOAD`
+  shim that maps them to `AF_INET` (socket, setsockopt, connect, bind) makes
+  it run. The Linux build needs `name: tun0` in `tunnel` and sets the
+  addresses itself; on Android it takes the fd and sets nothing.
 - Unused code, not imported anywhere: `lib/screens/connection_screen.dart`,
   `lib/screens/test_screen.dart`, `lib/data/dns_server_lists.dart`. Keep new
   parameters optional so they compile.

@@ -20,6 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Gradle builds the tun2socks engine (libhev-socks5-tunnel.so) from this submodule
+      - name: Fetch hev-socks5-tunnel
+        run: git submodule update --init --recursive --depth 1 vendor/hev-socks5-tunnel
+
       - name: Download dnstt.aar
         uses: actions/download-artifact@v7
         with:
@@ -68,6 +72,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # Gradle builds the tun2socks engine (libhev-socks5-tunnel.so) from this submodule
+      - name: Fetch hev-socks5-tunnel
+        run: git submodule update --init --recursive --depth 1 vendor/hev-socks5-tunnel
 
       - name: Download dnstt.aar
         uses: actions/download-artifact@v7
