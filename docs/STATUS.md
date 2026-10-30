@@ -234,6 +234,7 @@ Solution:
   sockets.
 - Tests: Go bridge ID test; Dart and Kotlin tests pass; debug APK builds;
   `flutter analyze` adds only one `avoid_print` info.
+- `ci.yml` is green on the stage 4 commit.
 - Not checked live (needs the user's server): Slipstream over real DoH/DoT
   resolvers on Android and desktop, throughput and HTTP 429 rate limits of
   public resolvers.
