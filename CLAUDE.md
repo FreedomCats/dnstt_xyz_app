@@ -1,5 +1,5 @@
 @AGENTS.md
-@docs/STATUS.md
+@docs/roadmap/README.md
 
 # DNSTT Client - Build & Development Guide
 
@@ -482,6 +482,26 @@ Desktop Slipstream manager that:
 
 ## Development Workflow
 
+### Toolchain
+
+- Flutter 3.38.7, Android SDK platform 36, build-tools 35,
+  NDK 28.2.13676358, JDK 17 (JDK 21 works too), Go toolchain pinned in
+  `go_src/go.mod` (1.26.10; an older local Go downloads it).
+- A local Android build needs `./scripts/build_aar.sh` first (about 3 minutes);
+  it reads `sdk.dir` from `android/local.properties`.
+- `android/gradlew` and the wrapper jar are not in git (`android/.gitignore`);
+  `flutter build apk --config-only` generates them in a few seconds.
+- In cloud containers Maven Central may answer 429 to parallel Gradle
+  downloads. Set `org.gradle.workers.max=1` and `org.gradle.parallel=false` in
+  the user Gradle properties and retry; Gradle keeps what it already fetched.
+  Install the NDK with `sdkmanager` up front: an interrupted Gradle download
+  leaves an NDK directory without `source.properties`.
+- A fresh cloud container has no Flutter or Android SDK. Download the Flutter
+  3.38.7 tarball from `storage.googleapis.com/flutter_infra_release` and the
+  Android command-line tools from `dl.google.com`, then `sdkmanager` for
+  `platforms;android-36`, `build-tools;35.0.0`, `platform-tools` and the NDK;
+  write `sdk.dir` and `flutter.sdk` into `android/local.properties` (ignored).
+
 ### Making Changes to Go Code
 
 ```bash
@@ -497,6 +517,56 @@ vim go_src/mobile/mobile.go
 # Rebuild Flutter app
 flutter build apk --debug
 ```
+
+Notes on the tests:
+
+- `cd go_src && go test ./...` takes about 15 s; the end-to-end test is in
+  `dnstt-server/e2e_test.go`.
+- `go vet ./...` still fails on upstream tests in `go_src/noise`; vet the other
+  packages by name (`go vet ./desktop`, `./client`, …).
+- `slipstream-client` and `slipstream-server` build from
+  `vendor/slipstream-rust` with `cargo build --release` (about 3 minutes,
+  after `git submodule update --init --recursive` there). Build in a copy to
+  keep the submodule clean. Without IPv6 in the container the client fails
+  with "Address family not supported": patch the copy (UDP socket on
+  `0.0.0.0`, no IPv4-mapped addresses in `normalize_dual_stack_addr`) before
+  running `TestSlipstreamOverBridge`.
+- hev-socks5-tunnel for Linux: `make` in a copy of the submodule (a few
+  seconds). A container with `/dev/net/tun` and root needs `unshare -n` for a
+  network namespace (`apt-get install iproute2`). hev opens `AF_INET6`
+  sockets only; without IPv6 an `LD_PRELOAD` shim that maps them to `AF_INET`
+  (socket, setsockopt, connect, bind) makes it run. The Linux build needs
+  `name: tun0` in `tunnel` and sets the addresses itself; on Android it takes
+  the fd and sets nothing.
+
+Run the tests (after `./scripts/build_aar.sh`):
+
+```bash
+flutter test test/socks5_auth_relay_test.dart test/resolver_spec_test.dart test/dns_server_import_test.dart
+(cd android && ./gradlew :app:testDebugUnitTest --tests 'xyz.dnstt.app.Socks5AuthRelayTest')
+flutter build apk --debug --target-platform android-arm64
+(cd go_src && go vet ./desktop)
+```
+
+- `flutter pub get` rewrites `linux/flutter/generated_plugins.cmake` and
+  `windows/flutter/generated_plugins.cmake`; revert them before committing.
+  `flutter analyze` and `flutter test` run `pub get` too, so revert them
+  before `git stash pop` as well, or the pop fails.
+- To see whether a change adds analyzer issues, compare the sorted
+  `flutter analyze` output (line numbers stripped) with that of the stashed
+  tree; the baseline has about 110 infos and one error in the stale
+  `test/widget_test.dart`.
+- Unused code, not imported anywhere: `lib/screens/connection_screen.dart`,
+  `lib/screens/test_screen.dart`, `lib/data/dns_server_lists.dart`. Keep new
+  parameters optional so they compile. Gradle unit tests leave
+  `android/build/`; delete it.
+- Following CI: the fork is public, so the unauthenticated GitHub API works
+  for runs and jobs
+  (`api.github.com/repos/FreedomCats/dnstt_xyz_app/actions/runs`); job logs
+  through the GitHub MCP tools. The API for other repositories is blocked in
+  sessions; raw files on `raw.githubusercontent.com` are readable.
+- `workflow_dispatch` buttons only exist for workflows on the default branch
+  `main`; `ci.yml` runs on every push to any branch.
 
 ### Testing on Device/Emulator
 

@@ -1,6 +1,6 @@
 # Stage 2: DoH and DoT in the Go library
 
-Stage 2 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md` (design: sections 3.1–3.4). The
+Stage 2 of `docs/DOH_DOT_TUN2SOCKS_ARCHITECTURE.md` (design: sections 3.1–3.4). The
 Go library gets UDP, DoH and DoT transports behind one resolver spec string,
 plus a UDP→DoH/DoT bridge and a resolver probe. The app does not use any of it
 yet (stage 3); its existing calls keep working unchanged.
@@ -155,7 +155,7 @@ app has now.
 9. `go vet` on the changed packages, `go test ./...`, `scripts/build_aar.sh`
    (gomobile with the new dependencies), the AAR's Java API compared with the
    stage 1 AAR (only additions), Kotlin unit tests and the debug APK.
-10. Docs: `CLAUDE.md` (Go library section), `docs/STATUS.md`; commit, push,
+10. Docs: `CLAUDE.md` (Go library section), the roadmap map; commit, push,
     CI green.
 
 ## Done when

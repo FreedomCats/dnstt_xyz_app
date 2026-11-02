@@ -1,6 +1,6 @@
 # Stage 3: DoH and DoT for DNSTT in the app
 
-Stage 3 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md` (design: sections 3.1, 3.5–3.7).
+Stage 3 of `docs/DOH_DOT_TUN2SOCKS_ARCHITECTURE.md` (design: sections 3.1, 3.5–3.7).
 The Go library has had UDP, DoH and DoT transports since stage 2; this stage
 lets the user add DoH and DoT servers and use them for DNSTT connections and
 DNS server tests, on Android (VPN, proxy, shared proxy, SSH) and on desktop.
@@ -151,7 +151,7 @@ New `lib/models/resolver_spec.dart`, a port of `client.ParseResolver`:
 8. Checks: `flutter analyze` (no new issues), `flutter test` for the new and
    relay tests, Kotlin unit tests, debug APK build, `go test ./...` (Go is
    unchanged).
-9. Docs: `CLAUDE.md` (config format, DNS servers), `docs/STATUS.md`; commit,
+9. Docs: `CLAUDE.md` (config format, DNS servers), the roadmap map; commit,
    push, CI green.
 
 ## Done when

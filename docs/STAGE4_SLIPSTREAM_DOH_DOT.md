@@ -1,6 +1,6 @@
 # Stage 4: DoH and DoT for Slipstream
 
-Stage 4 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md` (design: section 3.4). Since
+Stage 4 of `docs/DOH_DOT_TUN2SOCKS_ARCHITECTURE.md` (design: section 3.4). Since
 stage 3, DNSTT works over DoH and DoT servers; Slipstream refuses them because
 `slipstream-client` sends only plain UDP. This stage puts the local
 UDP→DoH/DoT bridge from stage 2 (`client.Bridge`, `Mobile.startBridge`,
@@ -108,7 +108,7 @@ for device DNS in VPN mode, where clients do check the ID.
    `MainActivity`.
 4. Dart: FFI bridge, `SlipstreamService`, `VpnService`, `DnsttService`,
    `home_screen.dart`; remove the refusals.
-5. Checks above; docs (`CLAUDE.md`, `docs/STATUS.md`); commit, push, CI green.
+5. Checks above; docs (`CLAUDE.md`, the roadmap map); commit, push, CI green.
 
 ## Done when
 

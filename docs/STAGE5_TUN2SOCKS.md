@@ -1,6 +1,6 @@
 # Stage 5: tun2socks in VPN mode
 
-Stage 5 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md` (design: section 4). The Android VPN
+Stage 5 of `docs/DOH_DOT_TUN2SOCKS_ARCHITECTURE.md` (design: section 4). The Android VPN
 mode replaces its hand-written IPv4/TCP stack with hev-socks5-tunnel, a small C
 tun2socks engine with a fake-IP DNS. This closes review items 1 (IPv6 leak,
 device DNS outside the tunnel) and "Simplified TCP implementation" of
@@ -158,4 +158,5 @@ Apps ──► TUN 198.18.0.1/32 + fc00::1/128, routes 0.0.0.0/0 and ::/0, MTU 8
 ## Documentation
 
 `CLAUDE.md` (structure, key components, build of the engine) and
-`docs/STATUS.md` (closed review items are recorded there, as in earlier stages).
+`docs/roadmap/release-2.3.0/plan.md` (closed review items are recorded there, as
+in earlier stages).

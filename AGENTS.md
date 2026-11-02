@@ -88,12 +88,37 @@ resolvers and addresses; the day-by-day course of work goes only into logs.
 Two subdirectories are outside git (`.gitignore`):
 
 - `docs/local/` — stage plans and logs `plan-*.md` (they inevitably contain
-  environment and dates), working notes (the resume point for new sessions) and
-  copies of documents before cleanup;
+  environment and dates), the roadmap journal and other working notes (the
+  resume point for new sessions) and copies of documents before cleanup;
 - `docs/runs/` — scripts, configs and logs of live runs.
 
 Check a new document against this file before `git add`; put a draft containing
 environment details into `docs/local/`.
+
+## Roadmap: where the plan and the state live
+
+Work is planned as a tree of nodes under `docs/roadmap/` and carried out node by
+node by the `lead` agent. `docs/ROADMAP_WORKFLOW.md` describes the scheme; these
+are the rules of this repository.
+
+- **The map is `docs/roadmap/<slug>/plan.md`**, not the default `doc/roadmap/`:
+  the project keeps all its documents in `docs/`, and this file governs what may
+  be published there. `docs/roadmap/README.md` lists the maps.
+- **The map is published**, so all the rules above apply to it: English, no
+  dates, no environment, no servers, resolvers, addresses, device data.
+- **The journal is not published.** It is `docs/local/roadmap/<slug>/journal.md`
+  and holds the resume point, the decisions with their reasons and the rejected
+  options. The map has a one-line `journal.md` pointing there. The journal is
+  written after every node, unattended, which is exactly how environment details
+  leak into a document — hence the separate place.
+- **No dates in the journal.** An entry names the node and the commit; a date
+  adds nothing a reader cannot get from `git log`.
+- **Stage plans are nodes of the map**, not `docs/local/plan-*.md` files. A
+  finished stage is recorded as a line in the root `plan.md` with a link to its
+  `docs/STAGE*.md` report, not as a map node: the `lead` creates a directory for
+  every stage listed and would plan the work again.
+- **Commits of map files** follow the rules below, like every other commit: no
+  Jira number is used in this repository's history.
 
 ## Third-party code under an incompatible license
 

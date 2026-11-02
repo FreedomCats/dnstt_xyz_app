@@ -1,6 +1,6 @@
 # Stage 1: build the Go library from source in CI
 
-Stage 1 of `docs/DOH_DOT_TUN2SOCKS_PLAN.md`. Every later stage changes Go code
+Stage 1 of `docs/DOH_DOT_TUN2SOCKS_ARCHITECTURE.md`. Every later stage changes Go code
 in `go_src/`, so the Android library (`dnstt.aar`) must be built from the
 sources at each commit, not taken from a prebuilt file.
 
@@ -82,7 +82,8 @@ sources at each commit, not taken from a prebuilt file.
      `slipstream-client` before bundling.
 
 8. **Documentation.** `CLAUDE.md` (project structure, "Building the Go Mobile
-   Library", development workflow, quick reference), `docs/STATUS.md`.
+   Library", development workflow, quick reference), the roadmap map
+   (`docs/roadmap/release-2.3.0/plan.md`).
 
 9. **Commit, push, follow CI** until `ci.yml` is green. The APK artifact then
    contains the AAR built in CI.
@@ -99,5 +100,5 @@ sources at each commit, not taken from a prebuilt file.
   (the Go code is the same; the toolchain and build are new). Slipstream is
   unaffected.
 - Not in this stage: building `libslipstream_client.so` for Android in CI and
-  for all ABIs (`docs/STATUS.md`, next steps 3.3). It does not block the
+  for all ABIs (`docs/roadmap/release-2.3.0/plan.md`, node 2). It does not block the
   DoH/DoT work and can follow as a separate stage.
