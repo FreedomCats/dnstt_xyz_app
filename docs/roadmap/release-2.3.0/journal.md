@@ -20,4 +20,4 @@ The journal holds, in this order:
 A fresh clone has no journal; work is resumed from the machine that holds
 `docs/local/`. If the journal is lost, the map and `git log` still give the
 state of the work: the root `plan.md` says which stages are open, and the
-`## Итог` sections of finished tasks say what each one did.
+`## Result` sections of finished tasks say what each one did.
