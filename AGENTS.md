@@ -117,27 +117,13 @@ are the rules of this repository.
   finished stage is recorded as a line in the root `plan.md` with a link to its
   `docs/STAGE*.md` report, not as a map node: the `lead` creates a directory for
   every stage listed and would plan the work again.
-- **Section headings are in English too.** The `lead` and `planner` agent
-  rules name the sections of a node in Russian; in this repository they are
-  written in English, with the same meaning and the same place in the
-  document. A node is detailed when it has a `## Steps` section, the criteria
-  are under `## Done when`, and a finished node has a `## Result` filled in by
-  the coordinator:
-
-  | Agent rules | Here |
-  |---|---|
-  | `# <название>` | `# <title>` |
-  | `## Готово, когда` | `## Done when` |
-  | `## Этапы` | `## Stages` |
-  | `## Шаги` | `## Steps` |
-  | `## Итог` | `## Result` |
-  | `Цель` | `Goal` |
-  | `Зависит от` | `Depends on` |
-  | `Что сделать, что затронуто` | `What to do, what is touched` |
-  | `Риски и что нужно от пользователя` | `Risks and what is needed from the user` |
-
-  The frontmatter (`kind`, `status`, `source`, `branch`, `base`, `depends`,
-  `jira`) keeps its keys: the agents parse them.
+- **The map's language is `lang: en` in its root**, and the headings follow
+  it: `## Done when`, `## Stages`, `## Steps`, `## Outcome`, and the stage
+  fields `Goal`, `What to do, what is touched`, `Depends on`, `Risks and what
+  is needed from the user`. The `lead` and `planner` rules name these sections
+  in Russian and know both sets; nothing has to be translated back for them.
+- **A task is detailed when it has `detailed: true`**, not when it has a steps
+  section: the `planner` sets the field, and `lead` decides from the field.
 - **Commits of map files** follow the rules below, like every other commit: no
   Jira number is used in this repository's history.
 

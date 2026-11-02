@@ -1,6 +1,7 @@
 ---
 kind: root
 status: todo
+lang: en
 source: docs/DOH_DOT_TUN2SOCKS_ARCHITECTURE.md
 branch: claude/keen-gates-rps2h8
 ---

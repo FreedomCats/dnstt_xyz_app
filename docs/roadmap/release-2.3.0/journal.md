@@ -9,7 +9,7 @@ git.
 
 The journal holds, in this order:
 
-- **Where we stopped** — the current node and its state, an open question for
+- **Where we left off** — the current node and its state, an open question for
   the user and whether it is answered, the state of the working tree if a task
   was interrupted, what to do next.
 - **Log** — appended only: the node, what was decided, by whom (the user or the
@@ -20,4 +20,4 @@ The journal holds, in this order:
 A fresh clone has no journal; work is resumed from the machine that holds
 `docs/local/`. If the journal is lost, the map and `git log` still give the
 state of the work: the root `plan.md` says which stages are open, and the
-`## Result` sections of finished tasks say what each one did.
+`## Outcome` sections of finished tasks say what each one did.
