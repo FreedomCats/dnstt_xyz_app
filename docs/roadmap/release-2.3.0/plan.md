@@ -1,9 +1,10 @@
 ---
 kind: root
-status: todo
+status: in-progress
 lang: en
 source: docs/DOH_DOT_TUN2SOCKS_ARCHITECTURE.md
 branch: develop
+base: 4c5277994585241777ed37136bcfdeaa4c4071aa
 ---
 
 # Release 2.3.0: first release of the fork with DoH/DoT and tun2socks
@@ -64,6 +65,8 @@ real server and device yet — that is node 6 of this map.
 
 ### 1. CI gate: analyzer and the full test suite
 
+Node: [01-ci-gate](01-ci-gate/plan.md).
+
 - Goal: CI catches what the developer would catch by hand, before the release
   depends on it.
 - What to do, what is touched: replace `test/widget_test.dart` with a smoke
@@ -77,6 +80,8 @@ real server and device yet — that is node 6 of this map.
 
 ### 2. Slipstream binary for every Android ABI
 
+Node: [02-slipstream-abi](02-slipstream-abi/plan.md).
+
 - Goal: Slipstream works on 32-bit ARM and x86_64 devices and emulators, and
   the binary no longer comes prebuilt from upstream.
 - What to do, what is touched: `scripts/build_slipstream_android.sh` in CI with
@@ -89,6 +94,8 @@ real server and device yet — that is node 6 of this map.
   three ABIs takes time in CI (build cache needed); APK size grows.
 
 ### 3. Disable shared LAN access to the proxy
+
+Node: [03-disable-lan-sharing](03-disable-lan-sharing/plan.md).
 
 - Goal: close review item 3 without shipping a half-built feature.
 - What to do, what is touched: remove the `0.0.0.0` branches in
@@ -104,6 +111,8 @@ real server and device yet — that is node 6 of this map.
 
 ### 4. SSH host key verification
 
+Node: [04-ssh-host-keys](04-ssh-host-keys/plan.md).
+
 - Goal: an SSH connection through the tunnel no longer accepts a substituted
   server key.
 - What to do, what is touched: a JSch `HostKeyRepository` with trust on first
@@ -118,6 +127,8 @@ real server and device yet — that is node 6 of this map.
   forget it (accepted); import/export must carry the field.
 
 ### 5. First release
+
+Node: [05-first-release](05-first-release/plan.md).
 
 - Goal: a signed release built in CI that the user can install and test with.
 - What to do, what is touched: `version: 2.3.0+6` in `pubspec.yaml`; a
@@ -135,6 +146,8 @@ real server and device yet — that is node 6 of this map.
 
 ### 6. Live checks
 
+Node: [06-live-checks](06-live-checks/plan.md).
+
 - Goal: prove on a real server and device that stages 1–5 work.
 - What to do, what is touched: the check list of architecture section 6 — DoH
   and DoT for DNSTT and Slipstream, proxy and VPN modes, desktop, throughput,
@@ -147,6 +160,8 @@ real server and device yet — that is node 6 of this map.
   and a desktop; the live checks cannot be delegated to an agent.
 
 ### 7. Upstream pull request for issue #15
+
+Node: [07-upstream-pr](07-upstream-pr/plan.md).
 
 - Goal: the SOCKS5 authentication work goes upstream.
 - What to do, what is touched: a branch from current upstream `master`,

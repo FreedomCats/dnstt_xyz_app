@@ -170,6 +170,15 @@ The same applies to `--amend`, `rebase`, `cherry-pick` and merge commits: git
 sets the committer date to the current time. Do not put session links or other
 account-bound service links into commit messages.
 
+Every commit message ends with this trailer, after the body and a blank line:
+
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+It is the one exception to the rule above: it names no person and no account,
+so it identifies nobody. Adding a commit or amending one keeps the trailer —
+when a commit is rewritten or cherry-picked, it is carried over, never
+dropped. The whole history before this rule already carries it.
+
 Release tags (`v*`) are lightweight only: `git tag v2.3.0`, without `-a`, `-s`
 or `-m`. An annotated tag stores the name, email and date of whoever created it.
 

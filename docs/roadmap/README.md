@@ -9,4 +9,4 @@ is kept outside git, in `docs/local/roadmap/<slug>/journal.md`.
 
 | Map | Status | What it is |
 |---|---|---|
-| [release-2.3.0](release-2.3.0/plan.md) | todo | First release of the fork with DoH/DoT and tun2socks: CI gate, Slipstream for every ABI, disabling shared LAN access, SSH host keys, the release, live checks, the upstream pull request. |
+| [release-2.3.0](release-2.3.0/plan.md) | in-progress | First release of the fork with DoH/DoT and tun2socks: CI gate, Slipstream for every ABI, disabling shared LAN access, SSH host keys, the release, live checks, the upstream pull request. |
