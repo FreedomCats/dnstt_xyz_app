@@ -1,6 +1,6 @@
 ---
 kind: task
-status: todo
+status: done
 detailed: true
 ---
 
@@ -74,3 +74,28 @@ comes from reading the code. If the start screen overflows in the default
 the mock in the test; do not change `lib/` to make the test pass.
 
 ## Outcome
+
+Done as planned. `test/widget_test.dart` is gone; `test/app_smoke_test.dart`
+holds one `testWidgets` that pumps `DnsttClientApp` under an `AppState`
+provider, asserts the empty start screen and taps the power icon.
+
+- `flutter test` with no arguments: 75 tests in four files pass (before: 74
+  and a compile error in `widget_test.dart`).
+- A false expectation (`No DNS selected` with `findsNothing`) fails the run.
+  The review also broke the screen on purpose: a renamed placeholder, a tap
+  that sets `connecting`, a tap that calls `_connect` without a config — the
+  test fails on each.
+- The default 800x600 test window needs no size override: the screen is a
+  `SingleChildScrollView`, nothing overflows, and finders reach the menu cards
+  below the fold.
+- No platform channel is called. On a desktop host `VpnService.init()` takes
+  the FFI branch and catches the missing `libdnstt`; the run prints
+  `Failed to load dnstt library: …` twice (`dnstt_ffi_service.dart` and
+  `vpn_service.dart` both print it). No mock is needed.
+- `flutter analyze` after the change: 109 issues, no errors (108 infos, one
+  warning), none in `test/`. Input for `02-analyzer-baseline`.
+- Left for later nodes: `ci.yml` and `release.yml` still list three test files
+  and carry the "stale test" comment (`03-full-dart-suite`); `CLAUDE.md` still
+  mentions the stale file in "Run the tests" (`07-describe-the-gate`).
+- Noticed, not in this map: `HomeScreen` subscribes to `VpnService.stateStream`
+  in `initState` and never cancels the subscription (it has no `dispose`).

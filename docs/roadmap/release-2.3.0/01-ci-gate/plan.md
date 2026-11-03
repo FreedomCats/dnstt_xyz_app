@@ -29,8 +29,9 @@ Children, in order:
 
 1. [01-smoke-test](01-smoke-test/plan.md) (task): a start-screen widget test
    replaces the counter template.
-2. [02-analyzer-baseline](02-analyzer-baseline/plan.md) (stage): the
-   existing findings are handled the way the user decides.
+2. [02-analyzer-baseline](02-analyzer-baseline/plan.md) (task): the existing
+   findings are handled the way the user decides — narrow the rule set until
+   `flutter analyze` is clean with no flags.
 3. [03-full-dart-suite](03-full-dart-suite/plan.md) (task): CI runs
    `flutter test` without a file list.
 4. [04-go-vet](04-go-vet/plan.md) (task): CI vets every package but
