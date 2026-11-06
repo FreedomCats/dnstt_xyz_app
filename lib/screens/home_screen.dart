@@ -37,6 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Listen to VPN state changes and update app state accordingly
     _vpnService.stateStream.listen((vpnState) {
+      if (!mounted) return;
       final appState = Provider.of<AppState>(context, listen: false);
       switch (vpnState) {
         case VpnState.connecting:

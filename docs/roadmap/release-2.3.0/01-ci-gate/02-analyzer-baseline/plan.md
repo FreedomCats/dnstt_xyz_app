@@ -1,6 +1,6 @@
 ---
 kind: task
-status: todo
+status: done
 depends: [01-smoke-test]
 detailed: true
 ---
@@ -24,16 +24,17 @@ most findings, and either fixes or accepts the rest so `flutter analyze` exits
 ## Steps
 
 1. Run `flutter analyze` on the tree after `01-smoke-test` removes
-   `test/widget_test.dart`. Group by rule code, for example
-   `dart analyze --format machine lib test | cut -d'|' -f3,4 | sort | uniq -c`,
-   and record the counts per rule in the `## Outcome`. The grep estimates (66
+   `test/widget_test.dart`. Group findings by analyzer diagnostic code and
+   record the counts per code in the `## Outcome`. The grep estimates (66
    `print(`, 25 `withOpacity(`) are a starting point, not a substitute: only
    the analyzer knows the real breakdown.
 2. Rewrite `analysis_options.yaml` to disable the rules that account for most
    findings. Start with `avoid_print` and `deprecated_member_use`, which the
-   estimates put at 66 and 25. Keep `include:
-   package:flutter_lints/flutter.yaml` and add a `linter: rules:` section
-   that lists the disabled rules with a comment for each saying why it is off.
+   measurements put at 69 and 30. Keep `include:
+   package:flutter_lints/flutter.yaml`; configure lint rules under
+   `linter: rules:` and analyzer diagnostic codes such as
+   `deprecated_member_use` under `analyzer: errors:`, with a comment for each
+   explaining why it is disabled.
    Do **not** add `// ignore:` or `// ignore_for_file:` comments to the code:
    a suppression belongs in the rule file, not scattered through the tree.
 3. Run `flutter analyze` again. If it reports findings for other rules, decide
@@ -57,10 +58,10 @@ most findings, and either fixes or accepts the rest so `flutter analyze` exits
    YAML change does not break the test step, and `flutter build apk --debug`
    to confirm the tree still compiles. Do not run these until
    `flutter analyze` is clean: a broken tree stays broken.
-7. Check that `flutter analyze --help` on Flutter 3.38.7 confirms what
-   `--fatal-infos` does by default. The stage assumes it is on, based on CI
-   fix PRs; if it is not, the command for `05-analyzer-gate` adjusts. Write
-   the finding into the `## Outcome`.
+7. Check `flutter analyze --help` and the Flutter 3.38.7 command configuration
+   to establish what `--fatal-infos` does by default. The stage assumes it is
+   on, based on CI fix PRs; if it is not, the command for `05-analyzer-gate`
+   adjusts. Write the finding into the `## Outcome`.
 8. `flutter analyze` runs `pub get` and can rewrite
    `linux/flutter/generated_plugins.cmake` and
    `windows/flutter/generated_plugins.cmake`: revert them.
@@ -78,3 +79,26 @@ most findings, and either fixes or accepts the rest so `flutter analyze` exits
   comment.
 
 ## Outcome
+
+Re-running Flutter 3.38.7 analyzer on the pre-task tree reported 109 issues:
+108 infos and one warning (`unused_element`). Per-rule counts were
+`avoid_print` 69, `deprecated_member_use` 30,
+`use_build_context_synchronously` 7, `unintended_html_in_doc_comment` 1,
+`prefer_final_fields` 1, and `unused_element` 1. These counts sum to 109; the
+`unused_element` diagnostic is the warning and the other 108 are infos.
+
+Disabled `avoid_print` in `analysis_options.yaml`: existing service diagnostics
+intentionally use `print`. Suppressed `deprecated_member_use` through
+`analyzer.errors` rather than `linter.rules`, because it is an analyzer
+diagnostic code, not a recognized lint rule; defer API migrations to a separate
+change. Kept `use_build_context_synchronously` enabled and fixed all seven
+occurrences with lifecycle guards. Fixed `unintended_html_in_doc_comment` by
+escaping the angle-bracket placeholder, made `_testingDns` final, and removed
+the unused `_importFromDnsttXyz` method. No findings remain, and no inline
+ignores were added.
+
+Flutter 3.38.7's `flutter analyze --help` confirms `--fatal-infos` defaults to
+on; the command configuration sets `defaultsTo: true`. Thus `flutter analyze`
+with no flags is the strict gate. It exits 0 with no issues.
+`flutter test` passes all four test files (75 tests), and
+`flutter build apk --debug` succeeds.

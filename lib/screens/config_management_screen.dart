@@ -480,6 +480,7 @@ class ConfigManagementScreen extends StatelessWidget {
         return;
       }
 
+      if (!context.mounted) return;
       final state = context.read<AppState>();
       final result = await state.importDnsttConfigs(configs);
 
@@ -578,6 +579,7 @@ class ConfigManagementScreen extends StatelessWidget {
       final file = File('${tempDir.path}/$fileName');
       await file.writeAsString(jsonString);
 
+      if (!context.mounted) return;
       final box = context.findRenderObject() as RenderBox?;
       await Share.shareXFiles(
         [XFile(file.path, mimeType: 'application/json')],
@@ -731,6 +733,7 @@ class ConfigManagementScreen extends StatelessWidget {
         return;
       }
 
+      if (!context.mounted) return;
       final state = context.read<AppState>();
       final importResult = await state.importDnsttConfigs(configs);
 

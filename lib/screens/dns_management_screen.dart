@@ -1123,99 +1123,6 @@ class _DnsManagementScreenState extends State<DnsManagementScreen> {
     );
   }
 
-  Future<void> _importFromDnsttXyz(BuildContext context) async {
-    // Show loading
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: Card(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Fetching servers from dnstt.xyz...'),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-
-    try {
-      final result = await ConfigImportExportService.fetchDnsttXyzServers();
-
-      if (context.mounted) {
-        Navigator.pop(context); // Close loading dialog
-
-        final state = context.read<AppState>();
-
-        // Import configs
-        int totalConfigs = 0;
-        if (result.configs.isNotEmpty) {
-          final configResult = await state.importDnsttConfigs(result.configs);
-          totalConfigs = configResult.added;
-        }
-
-        // Import DNS servers
-        int totalDns = 0;
-        if (result.dnsServers.isNotEmpty) {
-          final dnsResult = await state.importDnsServers(result.dnsServers);
-          totalDns = dnsResult.added;
-        }
-
-        if (context.mounted) {
-          if (totalConfigs == 0 && totalDns == 0) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('No new servers found on dnstt.xyz'),
-              ),
-            );
-          } else {
-            String message = '';
-            if (totalDns > 0) {
-              message = 'Imported $totalDns DNS servers';
-            }
-            if (totalConfigs > 0) {
-              if (message.isNotEmpty) message += ' and ';
-              message += '$totalConfigs DNSTT configs';
-            }
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(message),
-                backgroundColor: Colors.green,
-                action: totalConfigs > 0
-                    ? SnackBarAction(
-                        label: 'View Configs',
-                        textColor: Colors.white,
-                        onPressed: () {
-                          Navigator.pop(context); // Go back to previous screen
-                        },
-                      )
-                    : null,
-              ),
-            );
-          }
-        }
-      }
-    } catch (e) {
-      if (context.mounted) {
-        Navigator.pop(context); // Close loading dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to fetch from dnstt.xyz: ${e.toString()}'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 5),
-          ),
-        );
-      }
-    }
-  }
-
   void _showImportFromUrlDialog(BuildContext context) {
     final urlController = TextEditingController();
 
@@ -1422,6 +1329,7 @@ class _DnsManagementScreenState extends State<DnsManagementScreen> {
       final file = File('${tempDir.path}/$fileName');
       await file.writeAsString(jsonString);
 
+      if (!context.mounted) return;
       final box = context.findRenderObject() as RenderBox?;
       await Share.shareXFiles(
         [XFile(file.path, mimeType: 'application/json')],
@@ -1499,6 +1407,7 @@ class _DnsManagementScreenState extends State<DnsManagementScreen> {
         return;
       }
 
+      if (!context.mounted) return;
       final state = context.read<AppState>();
       final importResult = await state.importDnsServers(servers);
 
@@ -1568,6 +1477,7 @@ class _DnsManagementScreenState extends State<DnsManagementScreen> {
         return;
       }
 
+      if (!context.mounted) return;
       final state = context.read<AppState>();
       final importResult = await state.importDnsServers(servers);
 

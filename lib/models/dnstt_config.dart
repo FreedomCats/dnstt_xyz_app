@@ -13,7 +13,7 @@ enum TransportType {
 /// - ssh: Server configured to forward to SSH server (port 22)
 ///
 /// For SSH mode:
-/// 1. DNSTT creates TCP tunnel to SSH server (127.0.0.1:<port> -> SSH)
+/// 1. DNSTT creates TCP tunnel to SSH server (127.0.0.1:&lt;port&gt; -> SSH)
 /// 2. App's SSH client connects through tunnel using credentials from config
 /// 3. SSH dynamic port forwarding creates local SOCKS5 proxy
 /// 4. User apps connect to the local SOCKS5 proxy (port configurable in settings)

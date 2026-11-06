@@ -17,7 +17,7 @@ class AppState extends ChangeNotifier {
   DnsServer? _activeDns;
   ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
   String? _connectionError;
-  Map<String, bool> _testingDns = {};
+  final Map<String, bool> _testingDns = {};
   bool _isTestingAll = false;
   bool _cancelTestingRequested = false;
   int _testingProgress = 0;
