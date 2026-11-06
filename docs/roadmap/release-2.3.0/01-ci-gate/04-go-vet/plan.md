@@ -1,6 +1,6 @@
 ---
 kind: task
-status: in-progress
+status: blocked
 detailed: true
 ---
 
@@ -68,6 +68,13 @@ not expand scope to fix it; if the dynamic selection cannot exclude exactly
 that package while retaining coverage of the others, report back instead of
 changing Go tests or introducing another exclusion mechanism.
 
+## Blocked
+
+The local Go vet checks passed, but the new step has not been verified by
+GitHub Actions. A new run requires pushing the current `develop` branch, which
+contains one commit not yet on `origin/develop`. Wait for the user's
+authorization before pushing.
+
 ## Outcome
 
 The CI test job now runs `Go vet` after `Go tests`, dynamically listing packages
@@ -78,5 +85,5 @@ only the two known upstream `t.Fatal` calls from goroutines in
 Review approved the workflow change. Kotlin unit tests could not start locally
 because Android SDK target `android-34` is unavailable. The new step has not
 been checked by GitHub Actions: a new remote CI run requires separate push
-authorization, so this task remains in progress. No Go source or test was
-changed, and `release.yml` was not run.
+authorization, so this task remains blocked. No Go source or test was changed,
+and `release.yml` was not run.

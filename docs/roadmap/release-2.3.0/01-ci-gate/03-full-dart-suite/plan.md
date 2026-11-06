@@ -1,6 +1,6 @@
 ---
 kind: task
-status: in-progress
+status: done
 detailed: true
 depends: [01-smoke-test]
 ---
@@ -50,6 +50,6 @@ steps. Let Flutter discover and run the full Dart suite in both workflows.
 Both workflows now run `flutter test` without file arguments, and the stale
 test comments have been removed. The local full Dart suite passed all 75 tests,
 including `test/app_smoke_test.dart`; the diff passed `git diff --check`, and
-review approved the changes. No release workflow was run. A normal GitHub
-Actions CI run remains unverified because observing it requires a push, which
-was not authorized. Keep this task in progress until the CI run can be checked.
+review approved the changes. The normal GitHub Actions CI run passed after the
+branch update, including the test and Android build jobs. The release workflow
+was not run.
