@@ -1,6 +1,6 @@
 ---
 kind: task
-status: blocked
+status: done
 detailed: true
 depends: [02-analyzer-baseline]
 ---
@@ -116,12 +116,6 @@ documentation alignment.
 - Use the existing toolchain. No new SDK packages, agreements, credentials or
   live-device checks are required by this change.
 
-## Blocked
-
-Local implementation and review passed. The required GitHub Actions run for
-the analyzer change needs a separately authorized branch push. Keep the task
-open until that exact commit's `ci.yml` run passes in full.
-
 ## Outcome
 
 The `test` job now runs `Dart analysis` with plain `flutter analyze` immediately
@@ -139,8 +133,12 @@ pass. Local review approved the implementation and independently repeated clean
 analysis and all 75 Dart tests. Analyzer rules, dependencies and other workflows
 are unchanged; no generated-file changes remain.
 
-Remote verification is still pending. No GitHub Actions run for a commit
-containing this analyzer step has been checked. A separately authorized branch
-push must provide that exact commit to normal `ci.yml`; `Dart analysis`, the
-complete `test` job and the overall workflow, including AAR and Android builds,
-must all pass before this task is done.
+Normal GitHub Actions [CI run `42399754193`](https://github.com/FreedomCats/dnstt_xyz_app/actions/runs/42399754193)
+passed for reviewed commit `a7cb5062f4a702108c59023567d3e1fd4075eff6`, with
+event `push` and branch `develop`. All three jobs (`aar / build`, `test` and
+`build-android`) passed. The `Dart analysis` log confirms `flutter analyze`
+and `No issues found!`; the full Dart suite reports 75 tests passed in all four
+test files. Kotlin unit tests, Go tests and Go vet passed, as did AAR and APK
+builds, machine-path checks and artifact uploads. The remote workflow source
+matches the reviewed local file. No analyzer rules or dependencies were changed
+to obtain this result, and `release.yml` was not run.
