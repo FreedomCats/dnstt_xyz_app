@@ -70,13 +70,16 @@ Node: [01-ci-gate](01-ci-gate/plan.md).
 - Goal: CI catches what the developer would catch by hand, before the release
   depends on it.
 - What to do, what is touched: replace `test/widget_test.dart` with a smoke
-  test; run `flutter test` and `flutter analyze` on the whole tree; decide the
-  analyzer baseline; `go vet` on the packages that pass today.
+  test; run `flutter test` and plain `flutter analyze` on the whole tree under
+  the accepted narrowed rule set; dynamically vet all Go packages except the
+  exact upstream `noise` package.
 - Done when: `ci.yml` runs both commands and is green; a deliberately
   broken analyzer rule fails the build.
 - Depends on: nothing.
-- Risks and what is needed from the user: the analyzer baseline (~110 infos in
-  `lib/services/`) can hide new issues; the user decides the threshold.
+- Risks and what is needed from the user: the user chose to disable the two
+  noisy central rules and fix the remaining findings, requiring clean plain
+  analysis rather than a count threshold. Dependency resolution can change the
+  lint set; unexpected findings must be investigated without weakening the gate.
 
 ### 2. Slipstream binary for every Android ABI
 

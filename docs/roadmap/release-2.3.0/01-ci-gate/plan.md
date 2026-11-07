@@ -9,18 +9,18 @@ base: 4c5277994585241777ed37136bcfdeaa4c4071aa
 ## Goal
 
 CI catches what the developer would catch by hand, before the release depends
-on it. Today `ci.yml` does not run `flutter analyze`, and its `flutter test`
-either does not cover the whole tree or is not green because of the stale
-`test/widget_test.dart` (see `CLAUDE.md`, "Run the tests": the baseline has one
-error in that file and about 110 infos).
+on it. At the start of this stage, `ci.yml` did not run `flutter analyze`, its
+Dart test selection missed the counter-template failure, and the tree had about
+110 analyzer findings. The children replace that starting state with a verified
+gate and current development instructions.
 
 ## What to do, what is touched
 
 - Replace `test/widget_test.dart` with a smoke test that still means something.
 - Run `flutter test` on the whole tree and make it green.
-- Run `flutter analyze` in CI and decide the baseline: the ~110 existing infos
-  either get fixed or are pinned (a rule set in `analysis_options.yaml`, a
-  saved baseline) so that a new issue fails the build.
+- Run plain `flutter analyze` in CI under the accepted narrowed rule set:
+  centrally disable `avoid_print`, ignore `deprecated_member_use`, and fix
+  the remaining findings so a new enabled finding fails the build.
 - `go vet` on the packages that pass today (`go_src/noise` does not, see
   `CLAUDE.md`).
 - `.github/workflows/ci.yml`, `analysis_options.yaml`, `test/`.
@@ -57,15 +57,15 @@ Nothing.
 
 ## Risks and what is needed from the user
 
-The analyzer baseline can hide new issues. The user decides whether the
-existing infos are fixed now, pinned by a baseline file, or narrowed by a rule
-set. `docs/DOH_DOT_TUN2SOCKS_ARCHITECTURE.md`, section 5.3, describes a
-recorded count; any other choice changes that text. Children 2 and 5 wait for
-this decision.
+The user chose to narrow the central rule set rather than fix every noisy
+finding or compare counts. [Node 02](02-analyzer-baseline/plan.md) records the
+measured 109 findings, the two central exceptions with their reasons, and fixes
+for all other measured findings. Plain analysis is clean with fatal infos and
+warnings enabled by default; there is no outstanding baseline choice.
 
-The per-rule numbers are not known yet: only a `flutter analyze` run gives
-them. Grep finds 66 `print` calls and 25 `withOpacity` calls in `lib/`, which
-agrees with "mostly `avoid_print`" but does not replace the measurement.
+[Node 06](06-prove-the-gate/plan.md) records actual expected CI failures for
+analysis, runtime Dart tests and explicit Go vet, followed by a full successful
+run on the restored tree. The temporary probes never entered `develop`.
 
 `pubspec.lock` is not in git and `flutter_lints` is `^6.0.0`, so the rule set
 can change between two runs of the same commit.

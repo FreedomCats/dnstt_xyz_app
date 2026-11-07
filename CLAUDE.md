@@ -522,8 +522,10 @@ Notes on the tests:
 
 - `cd go_src && go test ./...` takes about 15 s; the end-to-end test is in
   `dnstt-server/e2e_test.go`.
-- `go vet ./...` still fails on upstream tests in `go_src/noise`; vet the other
-  packages by name (`go vet ./desktop`, `./client`, …).
+- The explicit vet step excludes `go_src/noise` because its upstream tests
+  contain two `t.Fatal` calls from goroutines, which vet rejects.
+  Full `go test ./...` still includes `noise`; use the dynamic selection below
+  for vet instead of maintaining a package list.
 - `slipstream-client` and `slipstream-server` build from
   `vendor/slipstream-rust` with `cargo build --release` (about 3 minutes,
   after `git submodule update --init --recursive` there). Build in a copy to
@@ -539,23 +541,51 @@ Notes on the tests:
   `name: tun0` in `tunnel` and sets the addresses itself; on Android it takes
   the fd and sets nothing.
 
-Run the tests (after `./scripts/build_aar.sh`):
+Run the analyzer, full Dart suite and Go checks without building an AAR or APK:
 
 ```bash
-flutter test test/socks5_auth_relay_test.dart test/resolver_spec_test.dart test/dns_server_import_test.dart
-(cd android && ./gradlew :app:testDebugUnitTest --tests 'xyz.dnstt.app.Socks5AuthRelayTest')
+flutter analyze
+flutter test
+(
+  set -euo pipefail
+  cd go_src
+  go test ./...
+  noise_package=$(go list ./noise)
+  go list ./... | grep -Fvx "$noise_package" | xargs -r go vet
+)
+```
+
+`flutter test` discovers the full suite, including `test/app_smoke_test.dart`,
+which checks the empty start screen. The verified suite has 75 tests in four
+files; these are observed results, not fixed limits. Vet discovers all packages
+and excludes only the exact import path returned by `go list ./noise`, covering
+eight of the current nine packages and automatically including future ones.
+
+`ci.yml` runs plain `flutter analyze` before the full Dart suite and explicit
+vet after full Go tests. A failed check prevents the dependent Android APK job.
+`release.yml` also runs the full Dart suite and Kotlin unit tests; it does not
+have an analyzer or explicit Go vet step.
+
+For Android checks, first build `dnstt.aar` with `./scripts/build_aar.sh` and
+generate the Gradle wrapper with `flutter build apk --config-only` if missing:
+
+```bash
+(cd android && ./gradlew :app:testDebugUnitTest)
 flutter build apk --debug --target-platform android-arm64
-(cd go_src && go vet ./desktop)
 ```
 
 - `flutter pub get` rewrites `linux/flutter/generated_plugins.cmake` and
   `windows/flutter/generated_plugins.cmake`; revert them before committing.
   `flutter analyze` and `flutter test` run `pub get` too, so revert them
   before `git stash pop` as well, or the pop fails.
-- To see whether a change adds analyzer issues, compare the sorted
-  `flutter analyze` output (line numbers stripped) with that of the stashed
-  tree; the baseline has about 110 infos and one error in the stale
-  `test/widget_test.dart`.
+- `flutter analyze` must report no issues under `analysis_options.yaml`.
+  Flutter 3.38.7 treats infos and warnings as fatal by default, so no flags or
+  finding-count comparison are needed. The rule set disables `avoid_print` to
+  retain intentional service diagnostics and ignores `deprecated_member_use`
+  centrally to defer API migrations. Other measured findings were fixed,
+  including all seven `use_build_context_synchronously` sites; there is no
+  remaining finding allowance. The counter-template test was replaced by the
+  start-screen smoke test.
 - Unused code, not imported anywhere: `lib/screens/connection_screen.dart`,
   `lib/screens/test_screen.dart`, `lib/data/dns_server_lists.dart`. Keep new
   parameters optional so they compile. Gradle unit tests leave

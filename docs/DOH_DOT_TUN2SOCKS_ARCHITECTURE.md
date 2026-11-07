@@ -338,8 +338,9 @@ system falls back to plain DNS, which mapdns answers.
 
 ## 5. Architecture: the remaining work
 
-These parts are designed but not built; they are the stages of
-`docs/roadmap/release-2.3.0/plan.md`.
+The release roadmap tracks these parts in
+`docs/roadmap/release-2.3.0/plan.md`. The CI gate in section 5.3 is implemented
+and verified; the other sections describe work still to be built.
 
 ### 5.1 Shared LAN access to the proxy: disable it
 
@@ -400,14 +401,35 @@ key and a `HostKeyRepository` implementation decides. Design:
 
 ### 5.3 CI: analyzer and the full test suite
 
-Review item 3.4. `.github/workflows/ci.yml` runs the Dart tests by name
-because `test/widget_test.dart` is the Flutter template's counter test against
-an app that has no counter. Design: replace it with a smoke test that pumps
-`DnsttClientApp` and finds the connection screen's controls, then run
-`flutter test` and `flutter analyze` for the whole tree. The analyzer baseline
-is about 110 infos, mostly `avoid_print` in `lib/services/`; CI compares the
-count against a recorded baseline instead of requiring zero, or the first run
-fails on upstream code.
+Review item 3.4 is addressed by the implemented gate. The counter-template test
+was replaced by `test/app_smoke_test.dart`, which pumps `DnsttClientApp` and
+checks the empty start screen. Both `.github/workflows/ci.yml` and
+`release.yml` run plain `flutter test`, discovering the full suite rather than
+listing files. The verified suite has 75 tests in four files; discovery also
+covers tests added later.
+
+`ci.yml` runs plain `flutter analyze` before Dart tests and requires no findings
+under `analysis_options.yaml`. The accepted rule set disables `avoid_print` to
+keep intentional service diagnostics and centrally ignores
+`deprecated_member_use` to defer API migrations. Other measured findings were
+fixed, including all seven `use_build_context_synchronously` sites. Flutter
+3.38.7 makes infos and warnings fatal by default; there is no saved count,
+finding allowance or weaker fatality flag.
+
+After full `go test ./...`, `ci.yml` discovers packages with `go list ./...`,
+removes only the exact import path returned by `go list ./noise` using
+`grep -Fvx`, and vets the rest with `xargs -r go vet` under `set -euo pipefail`.
+The explicit vet step excludes `go_src/noise` because its upstream tests contain
+two `t.Fatal` calls from goroutines, which vet rejects. Full Go tests still
+include that package; dynamic vet covers eight of the current nine packages and
+future packages automatically. Failed checks prevent the dependent Android APK
+job. `release.yml` runs the full Dart suite and Kotlin tests, but has no analyzer
+or explicit Go vet step.
+
+The [CI gate verification](roadmap/release-2.3.0/01-ci-gate/06-prove-the-gate/plan.md)
+records three isolated expected CI failures and a successful run after the
+probes were removed. Probe commits were kept outside `develop`; the final
+tested tree equals the reviewed baseline.
 
 ### 5.4 Slipstream binary for all ABIs
 
