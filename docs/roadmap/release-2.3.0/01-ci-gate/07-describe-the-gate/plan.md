@@ -1,6 +1,6 @@
 ---
 kind: task
-status: in-progress
+status: done
 detailed: true
 depends: [06-prove-the-gate]
 ---
@@ -189,3 +189,33 @@ children and historical reports unchanged.
   reflow. Historical task text is evidence, not a current command reference.
 
 ## Outcome
+
+Documentation revision `73031c0cbe4de87fc7dafa935fdffe0c8d4741fa` aligns
+`CLAUDE.md`'s development instructions with the implemented gate: plain analyzer
+and full Dart discovery, full Go tests followed by the exact dynamic vet
+selection, and separate Android prerequisites with the full Kotlin unit-test
+command. It distinguishes analyzer/vet coverage in `ci.yml` from the full
+Dart/Kotlin suites in `release.yml` and explains the exact upstream `noise`
+exclusion without narrowing Go test coverage.
+
+Architecture section 5.3 now describes the accepted central rule exceptions and
+zero findings under the remaining rules. Its section 5 qualifier and the parent
+plans no longer present the starting analyzer state or the user's decision as
+unresolved. Parent goals, acceptance criteria and frontmatter, other stages,
+completed children and historical reports are unchanged.
+
+On the documentation tree, root-level `flutter analyze` reported no issues and
+exited 0; plain `flutter test` passed all 75 tests in four files and exited 0.
+From `go_src`, full `go test ./...` and the unchanged filtered vet pipeline
+both exited 0, with vet selecting all eight non-`noise` packages. Incidental
+generated-plugin entries from Flutter were restored; no lockfile, test, source,
+configuration or workflow change remains. `git diff --check`, instruction
+cross-checks and the staged privacy review passed.
+
+Every change since node 06's baseline `7f47d45` is Markdown only. Its accepted
+green CI run `42410803299` supplies the AAR/APK, Kotlin, path, signature and
+artifact evidence for unchanged executable inputs; it is not a CI run of the
+later documentation revision. No new remote run, build, SDK installation,
+credential change or publication was performed. Stage-wide integration
+acceptance remains separate. No real problem was deferred because of repair
+cost.
