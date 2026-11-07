@@ -66,6 +66,14 @@ jobs:
         working-directory: go_src
         run: go test ./...
 
+      # Exclude noise: its upstream test calls t.Fatal from goroutines, which go vet flags.
+      - name: Go vet
+        working-directory: go_src
+        run: |
+          set -euo pipefail
+          noise_package=$(go list ./noise)
+          go list ./... | grep -Fvx "$noise_package" | xargs -r go vet
+
   build-android:
     needs: [aar, test]
     runs-on: ubuntu-latest
