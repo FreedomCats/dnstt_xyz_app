@@ -1,6 +1,6 @@
 ---
 kind: task
-status: in-progress
+status: blocked
 detailed: true
 depends: [03-full-dart-suite, 04-go-vet, 05-analyzer-gate]
 ---
@@ -248,3 +248,49 @@ Documentation alignment belongs to
   evidence so a continuation does not repeat an authorized external action.
 
 ## Outcome
+
+Local preparation and review are complete; remote verification is blocked on a
+new, explicit authorization for publication and the four ordinary CI runs.
+Baseline `B` is `7f47d452bd5321fdb9d90255d1e800c20bde4d49`, with tree
+`322ebbe43fdedb41a05dbbbadf7dec9da8d3a56d`.
+
+The isolated validation branch `ci-gate-probes` retains six linear ordinary
+commits outside `develop`:
+
+| Label | Commit | Result |
+|---|---|---|
+| `A` | `e160ac192d1e33ad5aaca8cbb74d50f70f61f7b9` | Adds only `test/analyzer_gate_probe.dart`. Plain `flutter analyze` exits 1 with the single enabled `unnecessary_new` info at `test/analyzer_gate_probe.dart:1:31`. |
+| `A-clean` | `b99be951d6806c802f614111c81a78398eea3ed6` | Removes the analyzer probe; tree equals `B`. |
+| `T` | `1decaba2425765c2b8dda01d14decba8f069b5d4` | Adds only `test/ci_gate_probe_test.dart`. Analysis exits 0; the full test command exits 1 after discovering the fifth file. The only failure is the named probe with `CI_GATE_DART_TEST_PROBE`, `Expected: false`, and `Actual: <true>`; the existing 75 tests pass. |
+| `T-clean` | `59d7f0138f113b6660a7fbc8d3dd5e0d25330c2b` | Removes the Dart test probe; tree equals `B`. |
+| `V` | `99cad38eee1414e0a5db9bd0c3575f1e9199954f` | Adds only `go_src/dns/vet_gate_probe_test.go`. Analysis, the full Dart suite, and unchanged `go test ./...` exit 0 before the exact filtered vet pipeline exits 123 with the sole diagnostic `dns/vet_gate_probe_test.go:5:23: ciGateVetProbe passes lock by value: sync.Mutex`. |
+| `V-clean` | `d1be6f4145280a003c608557841c5425cff43d46` | Removes the Go vet probe; tree is exactly `322ebbe43fdedb41a05dbbbadf7dec9da8d3a56d`, equal to `B`. |
+
+The baseline and every removal tree were compared by tree and full diff. Each
+negative tree differs from `B` by exactly its one prescribed probe file. The
+dynamic vet selection discovers nine packages, selects eight including `dns`,
+and excludes only the exact `noise` package. The Go probe is test-only,
+uncalled, and absent from production and gomobile inputs, so the preceding
+test and AAR paths are not weakened. No workflow, analyzer rule, dependency,
+production source, or existing test changed. Incidental generated-plugin
+entries created by Flutter checks were restored before the final cleanup.
+
+The programmer and reviewer independently confirmed the local negative and
+green results, inspected all six patches and commit metadata, and found no
+correctness, regression, privacy, or scope issue. `develop` remains at `B`,
+contains none of the probe files or experimental commits, and both local trees
+are clean. The exact local command output and status records remain in ignored
+task evidence.
+
+The proposed remote branch was read-only checked as absent. Completion still
+requires authorization for exactly four ordinary single-ref pushes of `A`,
+`T`, `V`, then `V-clean` to `refs/heads/ci-gate-probes`. Those pushes also
+publish the two currently unpushed documentation ancestors
+`1ebaa4c56f4f2361b1ab8e751a88a90e31d616b5` and
+`7f47d452bd5321fdb9d90255d1e800c20bde4d49`. Each push triggers the normal
+`ci.yml`; its AAR/APK builds and artifact uploads may use the existing signing
+secrets. No release, tag, dispatch, rerun, pull request, later `develop` push,
+or other remote write is included. Remote branch deletion has not been
+authorized or performed; recommend including one explicit deletion of that
+temporary ref after the fourth run if the user wants the ref removed, while
+making clear that deletion does not erase published commits or logs.
