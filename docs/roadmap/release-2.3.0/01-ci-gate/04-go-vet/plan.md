@@ -1,6 +1,6 @@
 ---
 kind: task
-status: blocked
+status: done
 detailed: true
 ---
 
@@ -68,13 +68,6 @@ not expand scope to fix it; if the dynamic selection cannot exclude exactly
 that package while retaining coverage of the others, report back instead of
 changing Go tests or introducing another exclusion mechanism.
 
-## Blocked
-
-The local Go vet checks passed, but the new step has not been verified by
-GitHub Actions. A new run requires pushing the current `develop` branch, which
-contains one commit not yet on `origin/develop`. Wait for the user's
-authorization before pushing.
-
 ## Outcome
 
 The CI test job now runs `Go vet` after `Go tests`, dynamically listing packages
@@ -82,8 +75,9 @@ and excluding only the import path returned by `go list ./noise`. The filtered
 vet passed for the other eight packages with Go 1.26.10; unfiltered vet reports
 only the two known upstream `t.Fatal` calls from goroutines in
 `go_src/noise/noise_test.go`. The full Go tests and all 75 Dart tests passed.
-Review approved the workflow change. Kotlin unit tests could not start locally
-because Android SDK target `android-34` is unavailable. The new step has not
-been checked by GitHub Actions: a new remote CI run requires separate push
-authorization, so this task remains blocked. No Go source or test was changed,
-and `release.yml` was not run.
+Review approved the workflow change. GitHub Actions `ci.yml` run `42384755885`
+passed on commit `ebcdc6a91da4edc1a93c74bbd58d819427d9ced1`. All three jobs
+(`aar / build`, `test` and `build-android`) passed, including the new `Go vet`
+step, Go tests, Dart tests, Kotlin unit tests, APK builds and machine-path
+checks. The known upstream `noise` test issue remains outside this task's
+scope. No Go source or test was changed, and `release.yml` was not run.
