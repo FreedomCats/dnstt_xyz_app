@@ -1,6 +1,6 @@
 ---
 kind: task
-status: blocked
+status: done
 detailed: true
 depends: [03-full-dart-suite, 04-go-vet, 05-analyzer-gate]
 ---
@@ -249,8 +249,11 @@ Documentation alignment belongs to
 
 ## Outcome
 
-Local preparation and review are complete; remote verification is blocked on a
-new, explicit authorization for publication and the four ordinary CI runs.
+Local preparation, review and all four normal CI runs are complete. The three
+isolated probes fail at their intended checks, and the restored baseline passes
+the entire workflow. The authorized sequence used four ordinary single-ref
+pushes, each inspected to completion before the next, followed by deletion of
+the temporary remote ref after the final successful run.
 Baseline `B` is `7f47d452bd5321fdb9d90255d1e800c20bde4d49`, with tree
 `322ebbe43fdedb41a05dbbbadf7dec9da8d3a56d`.
 
@@ -275,22 +278,60 @@ test and AAR paths are not weakened. No workflow, analyzer rule, dependency,
 production source, or existing test changed. Incidental generated-plugin
 entries created by Flutter checks were restored before the final cleanup.
 
-The programmer and reviewer independently confirmed the local negative and
-green results, inspected all six patches and commit metadata, and found no
-correctness, regression, privacy, or scope issue. `develop` remains at `B`,
-contains none of the probe files or experimental commits, and both local trees
-are clean. The exact local command output and status records remain in ignored
-task evidence.
+Review inspected all six patches, commit metadata and recorded negative
+results, and independently repeated the restored-green local checks. No
+correctness, regression, privacy, or scope issue was found. No review finding
+was rejected; the accepted cleanup restored two incidental generated-plugin
+entries. No real problem was deferred or narrowed because of repair cost.
+Exact command output and status records remain in ignored task evidence.
 
-The proposed remote branch was read-only checked as absent. Completion still
-requires authorization for exactly four ordinary single-ref pushes of `A`,
-`T`, `V`, then `V-clean` to `refs/heads/ci-gate-probes`. Those pushes also
-publish the two currently unpushed documentation ancestors
-`1ebaa4c56f4f2361b1ab8e751a88a90e31d616b5` and
-`7f47d452bd5321fdb9d90255d1e800c20bde4d49`. Each push triggers the normal
-`ci.yml`; its AAR/APK builds and artifact uploads may use the existing signing
-secrets. No release, tag, dispatch, rerun, pull request, later `develop` push,
-or other remote write is included. Remote branch deletion has not been
-authorized or performed; recommend including one explicit deletion of that
-temporary ref after the fourth run if the user wants the ref removed, while
-making clear that deletion does not erase published commits or logs.
+The temporary remote branch was absent before its authorized creation. The
+ordinary pushes also published documentation ancestors
+`1ebaa4c56f4f2361b1ab8e751a88a90e31d616b5` and `B`. No `develop` push,
+release, tag, dispatch, rerun or pull request was performed.
+
+All four normal `.github/workflows/ci.yml` runs are terminal and verified, each
+with event `push`, branch `ci-gate-probes`, attempt 1 and the exact head SHA
+identified by its label in the commit table above:
+
+| Head | Run | Verified result |
+|---|---|---|
+| `A` | [42409236838](https://github.com/FreedomCats/dnstt_xyz_app/actions/runs/42409236838) | `failure`: `aar / build` passes; `Dart analysis` fails only with the enabled info `unnecessary_new` at `test/analyzer_gate_probe.dart:1:31`, exit 1. Later checks and `build-android` are skipped. |
+| `T` | [42409547044](https://github.com/FreedomCats/dnstt_xyz_app/actions/runs/42409547044) | `failure`: AAR and clean analysis pass; `Dart tests` discovers `test/ci_gate_probe_test.dart` and reports 75 passing tests and only the runtime failure `CI gate rejects a failing Dart test`, with `CI_GATE_DART_TEST_PROBE`, `Expected: false`, and `Actual: <true>`, exit 1. Later checks and `build-android` are skipped. |
+| `V` | [42410023979](https://github.com/FreedomCats/dnstt_xyz_app/actions/runs/42410023979) | `failure`: AAR, clean analysis, all 75 Dart tests, Kotlin unit tests and full Go tests pass. The explicit `Go vet` step fails only with `dns/vet_gate_probe_test.go:5:23: ciGateVetProbe passes lock by value: sync.Mutex`, pipeline exit 123. `build-android` is skipped. |
+| `V-clean` | [42410803299](https://github.com/FreedomCats/dnstt_xyz_app/actions/runs/42410803299) | `success`: all three jobs and every existing check pass on the exact restored baseline tree. |
+
+The verified job IDs and conclusions are:
+
+| Head | `aar / build` | `test` | `build-android` |
+|---|---|---|---|
+| `A` | `128513550930`: success | `128513960885`: failure | `128514341016`: skipped |
+| `T` | `128514485102`: success | `128514907052`: failure | `128515344495`: skipped |
+| `V` | `128515929584`: success | `128516262215`: failure | `128517821690`: skipped |
+| `V-clean` | `128518308287`: success | `128518671955`: success | `128520153209`: success |
+
+The final AAR log confirms the build, `ok` machine-path checks for the native
+libraries of all three ABIs, checksums and artifact upload. The final test log
+confirms plain `flutter analyze` with `No issues found!`, all 75 Dart tests in
+the original four files, Gradle wrapper generation, Kotlin unit tests, full
+`go test ./...` and the unchanged dynamic vet pipeline. The Android log confirms
+release APK builds for `armeabi-v7a`, `arm64-v8a` and `x86_64`, successful
+machine-path checks under the existing CI allowance, signing-certificate
+verification and upload of all three APKs. The run has both `dnstt-aar` artifact
+`13589347474` and `android-apks` artifact `13590120801`, tied to the exact
+`V-clean` SHA. The remote workflow blob matches the reviewed local workflow.
+
+After the final green result was inspected, the authorized ordinary deletion
+removed only `refs/heads/ci-gate-probes`; a read-only remote-ref query confirms
+its absence. Remote `develop` remains at
+`a7cb5062f4a702108c59023567d3e1fd4075eff6`. The local validation branch and
+worktree remain intact and clean at `V-clean`, retaining the ordinary add/remove
+history. Removing the remote ref does not erase published commits or CI logs.
+
+Final full diffs and tree comparisons confirm that all three removal commits
+still equal `B`, including `V-clean` tree
+`322ebbe43fdedb41a05dbbbadf7dec9da8d3a56d`, also verified through the remote
+commit API. All six `merge-base --is-ancestor` checks against `develop` return
+1. All three probe files are absent from both branch trees and worktrees.
+Since `B`, only this task's roadmap bookkeeping has changed in `develop`; no
+workflow, production code, existing test, generated file or probe diff remains.
