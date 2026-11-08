@@ -1,6 +1,6 @@
 ---
 kind: stage
-status: blocked
+status: done
 base: 4c5277994585241777ed37136bcfdeaa4c4071aa
 ---
 
@@ -70,18 +70,41 @@ run on the restored tree. The temporary probes never entered `develop`.
 `pubspec.lock` is not in git and `flutter_lints` is `^6.0.0`, so the rule set
 can change between two runs of the same commit.
 
-## Acceptance blocked
+## Outcome
 
-The stage-wide review found no functional regressions and its declared gate
-criteria are supported by the completed task evidence. Final acceptance is
-pending a decision on the fresh local Android integration check. The configured
-SDK already contains platform 36, build-tools 35.0.0, NDK 28.2.13676358 and
-platform-tools; only platform 34 is missing. The SDK directory is not writable
-by the current user, so that package was not installed. Existing green CI and
-the earlier successful local debug APK build remain valid evidence; no further
-SDK installation has been performed.
+The stage-wide integration review covered the complete cumulative range
+`4c527799..c51f108` after the task commits and the documentation alignment. The
+review found no functional regressions, privacy issues or scope problems, and
+no code fix was required. The three stage criteria are met:
 
-The two smoke-test commit bodies were rewritten in English in the local branch.
-Their trees, authors, dates and required trailers are unchanged. The user
-authorized publishing the rewritten branch history; this does not change the
-Android-check blocker.
+- `ci.yml` runs plain `flutter analyze`, the full Dart suite and the exact
+  dynamic Go vet selection, and the normal workflow is green. The final run for
+  the published head was `42495583354`: AAR build, test and Android build jobs
+  all passed. Its test job passed analysis, all 75 Dart tests, Kotlin unit
+  tests, full Go tests and filtered vet; its Android job built the split APKs,
+  checked paths and signatures, and uploaded artifacts.
+- The three disposable CI probes produced the intended failures at analyzer,
+  runtime Dart test and explicit Go vet, followed by the restored-tree green
+  run `42410803299`. Probe commits stayed outside `develop`, and the temporary
+  validation ref was deleted after the green run.
+- `CLAUDE.md` and the architecture document describe the implemented gate,
+  including the full test discovery, strict analyzer policy and the single
+  upstream `noise` vet exclusion.
+
+Fresh local integration checks also passed. The forced Gradle command
+`./gradlew --offline -Dcom.android.build.gradle.internal.SdkLocator.sdkDownload=false
+--rerun-tasks :app:testDebugUnitTest` executed 146 tasks and passed 11 Kotlin
+tests with no failures, errors or skips. The ARM64 debug APK build completed
+successfully. Flutter-created entries in the Linux and Windows generated plugin
+files were restored exactly to `HEAD`; no source, generated or configuration
+diff remains. No release build was run.
+
+The user-approved rewrite changed the English bodies of two historical smoke
+test commits while preserving every affected tree, author, committer, date and
+required trailer. The rewritten `develop` history was published with an exact
+force-with-lease, and the remote head now matches local `c51f108`. No other ref
+was changed.
+
+Real problems not fully fixed because of cost: none. The pre-existing
+`HomeScreen` VPN-state subscription lifetime issue remains outside this stage
+and was not introduced by the stage changes.
