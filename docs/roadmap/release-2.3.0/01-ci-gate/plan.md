@@ -74,10 +74,14 @@ can change between two runs of the same commit.
 
 The stage-wide review found no functional regressions and its declared gate
 criteria are supported by the completed task evidence. Final acceptance is
-pending the user's direction on publishing the locally rewritten commit
-messages and on whether the completed CI/local evidence is sufficient without
-installing additional Android SDK components for another local check. The two
-smoke-test commit bodies were rewritten in local `develop`; their trees,
-authors, dates and required trailers are unchanged. `origin/develop` still
-points to the original published history. No force push or additional SDK
-installation has been performed.
+pending a decision on the fresh local Android integration check. The configured
+SDK already contains platform 36, build-tools 35.0.0, NDK 28.2.13676358 and
+platform-tools; only platform 34 is missing. The SDK directory is not writable
+by the current user, so that package was not installed. Existing green CI and
+the earlier successful local debug APK build remain valid evidence; no further
+SDK installation has been performed.
+
+The two smoke-test commit bodies were rewritten in English in the local branch.
+Their trees, authors, dates and required trailers are unchanged. The user
+authorized publishing the rewritten branch history; this does not change the
+Android-check blocker.
