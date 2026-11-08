@@ -1,0 +1,291 @@
+name: Build Slipstream for Android
+
+# Produces slipstream-android-jni for consumers in the same workflow run.
+# Download that named artifact directly into android/app/src/main/jniLibs/.
+# Require all three files, then restore the mode lost by ZIP artifact transport:
+#   chmod 0755 android/app/src/main/jniLibs/arm64-v8a/libslipstream_client.so
+#   chmod 0755 android/app/src/main/jniLibs/armeabi-v7a/libslipstream_client.so
+#   chmod 0755 android/app/src/main/jniLibs/x86_64/libslipstream_client.so
+#   test -x android/app/src/main/jniLibs/arm64-v8a/libslipstream_client.so
+#   test -x android/app/src/main/jniLibs/armeabi-v7a/libslipstream_client.so
+#   test -x android/app/src/main/jniLibs/x86_64/libslipstream_client.so
+# Do this before every Gradle invocation, including Kotlin tests. The payload
+# has no enclosing directory or tar wrapper; there is no download fallback.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  NDK_VERSION: '28.2.13676358'
+  CARGO_NDK_VERSION: '4.1.2'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+
+      - name: Install Android NDK
+        run: |
+          set -euo pipefail
+          sdk_dir="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$sdk_dir"
+          sdk_dir="$(cd "$sdk_dir" && pwd -P)"
+          sdkmanager="$sdk_dir/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdkmanager"
+          "$sdkmanager" --sdk_root="$sdk_dir" --install "ndk;$NDK_VERSION"
+          ndk_home="$(cd "$sdk_dir/ndk/$NDK_VERSION" && pwd -P)"
+          test -f "$ndk_home/source.properties"
+          ndk_revision="$(sed -n 's/^Pkg\.Revision[[:space:]]*=[[:space:]]*//p' "$ndk_home/source.properties")"
+          test "$ndk_revision" = "$NDK_VERSION"
+          printf 'ANDROID_NDK_HOME=%s\nANDROID_NDK_ROOT=%s\n' "$ndk_home" "$ndk_home" >> "$GITHUB_ENV"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Install cargo-ndk
+        run: |
+          set -euo pipefail
+          cargo install cargo-ndk --version "$CARGO_NDK_VERSION" --locked
+          test "$(cargo ndk --version)" = "cargo-ndk $CARGO_NDK_VERSION"
+
+      - name: Derive Android build-cache identity
+        id: cache-key
+        run: |
+          set -euo pipefail
+          for tool in cargo cargo-ndk rustc rustup git cmake make perl pkg-config strings grep sed sort head mktemp uname cp chmod rm rmdir cat mv mkdir realpath sha256sum; do
+            command -v "$tool" > /dev/null
+          done
+          test -x scripts/check_binary_paths.sh
+          test -n "${HOME:-}"
+          test -n "${ImageOS:-}"
+          test -n "${ImageVersion:-}"
+          test "$ANDROID_NDK_HOME" = "$ANDROID_NDK_ROOT"
+
+          # Keep these stamp inputs and native_context identical to the script.
+          SCRIPT_DIR="$(cd scripts && pwd)"
+          PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+          SLIPSTREAM_SRC="$PROJECT_DIR/vendor/slipstream-rust"
+          ANDROID_NDK_HOME="$(cd "$ANDROID_NDK_HOME" && pwd -P)"
+          ANDROID_API=21
+          ABIS=(arm64-v8a armeabi-v7a x86_64)
+          TARGETS=(aarch64-linux-android armv7-linux-androideabi x86_64-linux-android)
+          CLANG_TARGETS=(aarch64-linux-android armv7a-linux-androideabi x86_64-linux-android)
+          MACHINES=(AArch64 ARM 'Advanced Micro Devices X86-64')
+          expected_revision="$(git -C "$PROJECT_DIR" rev-parse HEAD:vendor/slipstream-rust)"
+          picoquic_revision="$(git -C "$SLIPSTREAM_SRC" rev-parse HEAD:vendor/picoquic)"
+          builder_identity="$(git hash-object "$SCRIPT_DIR/build_slipstream_android.sh")"
+          lock_identity="$(git hash-object "$SLIPSTREAM_SRC/Cargo.lock")"
+          native_context="$(printf '%s\n' "$SLIPSTREAM_SRC" "$HOME" "$ANDROID_NDK_HOME" \
+            "$(rustc --version)" "$(cmake --version)" "${CMAKE_GENERATOR:-}" | git hash-object --stdin)"
+          workflow_identity="$(git hash-object "$PROJECT_DIR/.github/workflows/build-slipstream-android.yml")"
+          source_path="$(cd "$SLIPSTREAM_SRC" && pwd -P)"
+          home_path="$(cd "$HOME" && pwd -P)"
+          rustc_path="$(rustup which rustc)"
+          cargo_path="$(rustup which cargo)"
+          active_toolchain="$(rustup show active-toolchain)"
+          installed_targets="$(rustup target list --installed)"
+          for target in "${TARGETS[@]}"; do
+            grep -Fxq "$target" <<< "$installed_targets"
+          done
+          ndk_revision="$(sed -n 's/^Pkg\.Revision[[:space:]]*=[[:space:]]*//p' "$ANDROID_NDK_HOME/source.properties")"
+          test "$ndk_revision" = "$NDK_VERSION"
+          test "$(cargo ndk --version)" = "cargo-ndk $CARGO_NDK_VERSION"
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -s "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+
+          # Paths and full tool output stay in a private manifest, never the summary.
+          manifest="$(mktemp "$RUNNER_TEMP/slipstream-android-cache.XXXXXX")"
+          {
+            printf '%s\n' 'cache-schema=slipstream-android-v1' \
+              "runner-os=$RUNNER_OS" "runner-arch=$RUNNER_ARCH" \
+              "image-os=$ImageOS" "image-version=$ImageVersion" \
+              "source-path=$source_path" "home-path=$home_path" \
+              "ndk-path=$ANDROID_NDK_HOME" "workflow=$workflow_identity" \
+              "rustc-path=$rustc_path" "cargo-path=$cargo_path" "toolchain=$active_toolchain" \
+              'profile=release' 'package=slipstream-client' 'features=openssl-vendored' 'locked=true'
+            for i in "${!ABIS[@]}"; do
+              printf '%s\n' 'schema=1' "abi=${ABIS[$i]}" "target=${TARGETS[$i]}" \
+                "api=$ANDROID_API" "ndk=$NDK_VERSION" "source=$expected_revision" \
+                "picoquic=$picoquic_revision" "lock=$lock_identity" \
+                "builder=$builder_identity" "context=$native_context" \
+                "clang-target=${CLANG_TARGETS[$i]}" "machine=${MACHINES[$i]}"
+            done
+          } > "$manifest"
+          record_tool() {
+            local tool="$1" version tool_path resolved_path
+            shift
+            tool_path="$(command -v "$tool")"
+            resolved_path="$(realpath "$tool_path")"
+            if [ "$tool" = cargo-ndk ]; then
+              version="$(cargo ndk "$@")"
+            else
+              version="$("$tool" "$@")"
+            fi
+            printf '%s\n' "tool=$tool" "path=$tool_path" "resolved-path=$resolved_path" "$version" >> "$manifest"
+          }
+          record_tool rustc --version --verbose
+          record_tool cargo --version --verbose
+          record_tool cargo-ndk --version
+          record_tool rustup --version
+          record_tool cmake --version
+          record_tool make --version
+          record_tool perl -V
+          record_tool pkg-config --version
+          if command -v ninja > /dev/null; then
+            record_tool ninja --version
+          fi
+          for tool in clang clang++ llvm-ar llvm-ranlib llvm-readelf; do
+            test -x "$NDK_BIN/$tool"
+            record_tool "$NDK_BIN/$tool" --version
+          done
+          for target in "${CLANG_TARGETS[@]}"; do
+            test -x "$NDK_BIN/$target$ANDROID_API-clang"
+            record_tool "$NDK_BIN/$target$ANDROID_API-clang" --version
+          done
+          git hash-object "$ANDROID_NDK_HOME/source.properties" \
+            "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" >> "$manifest"
+          digest="$(sha256sum "$manifest")"
+          printf 'key=slipstream-android-v1-%s\n' "${digest%% *}" >> "$GITHUB_OUTPUT"
+          printf 'source=%s\npicoquic=%s\n' "$expected_revision" "$picoquic_revision" >> "$GITHUB_OUTPUT"
+
+          versions="$(mktemp "$RUNNER_TEMP/slipstream-android-versions.XXXXXX")"
+          {
+            printf 'NDK %s\n' "$ndk_revision"
+            rustc --version
+            cargo --version
+            cargo ndk --version
+            cmake --version
+            make --version | sed -n '1p'
+            perl -e 'printf "Perl %s\n", $^V'
+            printf 'pkg-config %s\n' "$(pkg-config --version)"
+          } > "$versions"
+          printf 'versions=%s\n' "$versions" >> "$GITHUB_OUTPUT"
+
+      # One exact key selects the entire bundle, including hidden native stamps
+      # and _deps. A prefix-only lookup must not restore any build directory.
+      - name: Look up exact Android build cache
+        id: cache-lookup
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            vendor/slipstream-rust/target
+            vendor/slipstream-rust/.picoquic-build/aarch64-linux-android
+            vendor/slipstream-rust/.picoquic-build/armv7-linux-androideabi
+            vendor/slipstream-rust/.picoquic-build/x86_64-linux-android
+          key: ${{ steps.cache-key.outputs.key }}
+          lookup-only: true
+          enableCrossOsArchive: false
+
+      - name: Restore exact Android build cache
+        id: cache-restore
+        if: ${{ steps.cache-lookup.outputs.cache-hit == 'true' }}
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            vendor/slipstream-rust/target
+            vendor/slipstream-rust/.picoquic-build/aarch64-linux-android
+            vendor/slipstream-rust/.picoquic-build/armv7-linux-androideabi
+            vendor/slipstream-rust/.picoquic-build/x86_64-linux-android
+          key: ${{ steps.cache-key.outputs.key }}
+          fail-on-cache-miss: true
+          enableCrossOsArchive: false
+
+      - name: Require an exact restored key
+        if: ${{ steps.cache-lookup.outputs.cache-hit == 'true' }}
+        env:
+          EXPECTED_KEY: ${{ steps.cache-key.outputs.key }}
+          CACHE_HIT: ${{ steps.cache-restore.outputs.cache-hit }}
+          MATCHED_KEY: ${{ steps.cache-restore.outputs.cache-matched-key }}
+        run: |
+          set -euo pipefail
+          test "$CACHE_HIT" = true
+          test "$MATCHED_KEY" = "$EXPECTED_KEY"
+
+      # Always run the script: even an exact cache hit must pass its stamp,
+      # CMake and archive checks. Preserve rejected caches without repair.
+      - name: Build all three Android ABIs
+        id: build
+        run: scripts/build_slipstream_android.sh
+
+      - name: Check and stage JNI artifact
+        id: stage
+        env:
+          SOURCE_REVISION: ${{ steps.cache-key.outputs.source }}
+          PICOQUIC_REVISION: ${{ steps.cache-key.outputs.picoquic }}
+          TOOL_VERSIONS: ${{ steps.cache-key.outputs.versions }}
+          CACHE_HIT: ${{ steps.cache-lookup.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          outputs=(
+            android/app/src/main/jniLibs/arm64-v8a/libslipstream_client.so
+            android/app/src/main/jniLibs/armeabi-v7a/libslipstream_client.so
+            android/app/src/main/jniLibs/x86_64/libslipstream_client.so
+          )
+          for output in "${outputs[@]}"; do
+            if [ ! -f "$output" ] || [ -L "$output" ] || [ ! -s "$output" ] || [ ! -x "$output" ]; then
+              echo "Missing, symlinked, empty or non-executable output: $output" >&2
+              exit 1
+            fi
+          done
+          scripts/check_binary_paths.sh \
+            android/app/src/main/jniLibs/arm64-v8a/libslipstream_client.so \
+            android/app/src/main/jniLibs/armeabi-v7a/libslipstream_client.so \
+            android/app/src/main/jniLibs/x86_64/libslipstream_client.so
+
+          staging_root="$(mktemp -d "$RUNNER_TEMP/slipstream-android-jni.XXXXXX")"
+          for output in "${outputs[@]}"; do
+            relative="${output#android/app/src/main/jniLibs/}"
+            mkdir -p "$staging_root/${relative%/*}"
+            cp -p -- "$output" "$staging_root/$relative"
+          done
+          cache_status=miss
+          if [ "$CACHE_HIT" = true ]; then
+            cache_status=exact-hit
+          fi
+          {
+            echo '### Slipstream Android JNI'
+            echo '```'
+            printf 'Slipstream: %s\npicoquic: %s\n' "$SOURCE_REVISION" "$PICOQUIC_REVISION"
+            cat "$TOOL_VERSIONS"
+            printf 'Build cache: %s\n' "$cache_status"
+            cd "$staging_root"
+            sha256sum arm64-v8a/libslipstream_client.so \
+              armeabi-v7a/libslipstream_client.so x86_64/libslipstream_client.so
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf 'root=%s\n' "$staging_root" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Slipstream Android JNI
+        id: artifact
+        if: ${{ success() && !cancelled() && steps.build.outcome == 'success' && steps.stage.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: slipstream-android-jni
+          path: ${{ steps.stage.outputs.root }}
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Save successful Android build cache
+        if: ${{ success() && !cancelled() && steps.cache-lookup.outputs.cache-hit != 'true' && steps.build.outcome == 'success' && steps.stage.outcome == 'success' && steps.artifact.outcome == 'success' }}
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            vendor/slipstream-rust/target
+            vendor/slipstream-rust/.picoquic-build/aarch64-linux-android
+            vendor/slipstream-rust/.picoquic-build/armv7-linux-androideabi
+            vendor/slipstream-rust/.picoquic-build/x86_64-linux-android
+          key: ${{ steps.cache-key.outputs.key }}
+          enableCrossOsArchive: false

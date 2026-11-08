@@ -14,6 +14,9 @@ jobs:
   aar:
     uses: ./.github/workflows/build-aar.yml
 
+  slipstream-android:
+    uses: ./.github/workflows/build-slipstream-android.yml
+
   test:
     needs: aar
     runs-on: ubuntu-latest
