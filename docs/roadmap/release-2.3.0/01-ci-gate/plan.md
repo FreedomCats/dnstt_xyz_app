@@ -74,8 +74,10 @@ can change between two runs of the same commit.
 
 The stage-wide review found no functional regressions and its declared gate
 criteria are supported by the completed task evidence. Final acceptance is
-pending the user's decision on whether to accept two historical non-English
-commit messages as a documented legacy deviation while preserving their
-commits, and whether the completed CI/local evidence is sufficient without
-installing additional Android SDK components for another local check. No
-history rewrite or additional SDK installation has been performed.
+pending the user's direction on publishing the locally rewritten commit
+messages and on whether the completed CI/local evidence is sufficient without
+installing additional Android SDK components for another local check. The two
+smoke-test commit bodies were rewritten in local `develop`; their trees,
+authors, dates and required trailers are unchanged. `origin/develop` still
+points to the original published history. No force push or additional SDK
+installation has been performed.
