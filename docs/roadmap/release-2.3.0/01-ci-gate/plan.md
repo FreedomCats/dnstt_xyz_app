@@ -1,6 +1,6 @@
 ---
 kind: stage
-status: in-progress
+status: blocked
 base: 4c5277994585241777ed37136bcfdeaa4c4071aa
 ---
 
@@ -69,3 +69,13 @@ run on the restored tree. The temporary probes never entered `develop`.
 
 `pubspec.lock` is not in git and `flutter_lints` is `^6.0.0`, so the rule set
 can change between two runs of the same commit.
+
+## Acceptance blocked
+
+The stage-wide review found no functional regressions and its declared gate
+criteria are supported by the completed task evidence. Final acceptance is
+pending the user's decision on whether to accept two historical non-English
+commit messages as a documented legacy deviation while preserving their
+commits, and whether the completed CI/local evidence is sufficient without
+installing additional Android SDK components for another local check. No
+history rewrite or additional SDK installation has been performed.
