@@ -1,6 +1,6 @@
 ---
 kind: task
-status: todo
+status: done
 depends: [03-verify-local-only]
 ---
 
@@ -51,3 +51,24 @@ reports are not rewritten.
 - Do not rewrite historical stage reports (`docs/STAGE*.md`): they describe the
   state at the time.
 - No user input is needed; the decision to remove the mode was taken already.
+
+## Outcome
+
+- `docs/CODE_REVIEW.md` item 3 now has a `**Resolved.**` paragraph: the share
+  mode was unreachable from the UI and was removed instead of given a password;
+  the removed Kotlin branches and channel methods and the removed Go API are
+  named, and every proxy listener binds `127.0.0.1`. The suggested work order
+  now says to remove the mode, not to add a password.
+- `CLAUDE.md` describes the relay and both Android proxy modes as loopback-only
+  and points to review item 3.
+- Architecture section 5.1 is present tense: the implemented removal, the
+  listener-inventory result, and the possible password-protected follow-up as a
+  separate stage. The section-5 preamble lists 5.1, 5.3 and 5.4 as implemented.
+- No code, test, workflow or generated file changed. The share-term grep leaves
+  the original problem statement plus this resolved paragraph in
+  `CODE_REVIEW.md`, `docs/ROADMAP_WORKFLOW.md` (the decision record), the root
+  stage description, the historical `docs/STAGE1_GO_LIBRARY_CI.md`, architecture
+  5.1's description of what was removed, and this stage's node files. All are
+  accurate references to the removed API, not stale claims; the literal
+  allowlist in `## Done when` did not anticipate the historical report and the
+  architecture resolution text.

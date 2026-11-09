@@ -412,13 +412,15 @@ Android Slipstream manager that:
 Android foreground service for Slipstream proxy mode (non-VPN):
 - Runs as a foreground service with notification
 - Uses `SlipstreamBridge` to manage the subprocess
+- Binds `127.0.0.1` only; it has no shared LAN mode (review item 3)
 
 ### Socks5AuthRelay.kt / socks5_auth_relay.dart
 
 Local SOCKS5 relay used when the SOCKS5 proxy behind the tunnel server requires
 username/password authentication (RFC 1929):
 - The tunnel client (dnstt or slipstream) listens on a free localhost port; the relay takes the
-  user-facing address (`127.0.0.1:<port>`, or `0.0.0.0:<port>` with proxy sharing)
+  user-facing address (`127.0.0.1:<port>`). Every proxy mode binds loopback only: the shared LAN
+  mode was removed (review item 3)
 - Local clients (tun2socks engine, tunnel verification, DNS tests, other apps) connect without auth;
   the relay authenticates upstream and passes the rest of the stream through unchanged
 - The relay reads the client's request and sends the upstream greeting, credentials and request

@@ -68,6 +68,16 @@ Wi-Fi) can use the tunnel.
 **Fix:** require a SOCKS5 username and password when sharing is enabled and
 warn about it in the UI.
 
+**Resolved.** The share mode was unreachable from the UI, so it was removed
+instead of given a password: the `0.0.0.0` branches and `EXTRA_SHARE_PROXY`
+handling in `DnsttProxyService.kt`, `SlipstreamProxyService.kt` and
+`SshTunnelClient.kt`, the channel methods `setProxySharing`,
+`isProxySharingEnabled`, `connectProxyShared` and `getLocalIpAddresses`, and
+the Go API `setShareProxy` / `IsShareProxyEnabled` are gone; every proxy
+listener binds `127.0.0.1`. A password-protected version can return as its own
+stage. Evidence: the listener inventory and full checks in
+[03-disable-lan-sharing](roadmap/release-2.3.0/03-disable-lan-sharing/plan.md).
+
 ### 4. SSH without server key verification
 
 `SshTunnelClient.kt:95` sets `StrictHostKeyChecking=no`. For DNSTT this is
@@ -181,7 +191,8 @@ download (`GOTOOLCHAIN=auto`).
 ## Suggested order of work
 
 1. Block IPv6 leaks and route DNS through the tunnel (items 1–2).
-2. Add a SOCKS password for "share proxy" and a warning in the UI (item 3).
+2. Remove the unauthenticated "share proxy" mode (item 3); a password-protected
+   version can return as a separate stage.
 3. Create a dedicated signing key and rebuild the AAR and `.so` in CI
    (items 5–6); add Slipstream builds for all ABIs.
 4. Add pull request CI: `flutter analyze`, `go test ./...`, a fixed widget

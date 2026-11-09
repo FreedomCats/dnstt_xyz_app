@@ -339,40 +339,33 @@ system falls back to plain DNS, which mapdns answers.
 ## 5. Architecture: the remaining work
 
 The release roadmap tracks these parts in
-`docs/roadmap/release-2.3.0/plan.md`. The CI gate in section 5.3 is implemented
-and verified; the other sections describe work still to be built.
+`docs/roadmap/release-2.3.0/plan.md`. Sections 5.1 (completed removal), 5.3
+(CI gate) and 5.4 (Android ABI build) are implemented and verified; the other
+sections describe work still to be built.
 
-### 5.1 Shared LAN access to the proxy: disable it
+### 5.1 Shared LAN access to the proxy: removed
 
-Review item 3 of `docs/CODE_REVIEW.md`: with sharing enabled the SOCKS5 proxy
-listens on `0.0.0.0` without a password. With upstream auth the relay would
-lend the upstream account to the whole network.
+Review item 3 of `docs/CODE_REVIEW.md` was that the SOCKS5 proxy could listen
+on `0.0.0.0` without a password; with upstream auth the relay would lend the
+upstream account to the whole network. No Dart code called the sharing
+channel, so the mode was unreachable from the UI; the decision was to remove it
+rather than to add a password.
 
-Three places bind to `0.0.0.0` when `shareProxy` is set:
+Implemented: `DnsttProxyService.kt`, `SlipstreamProxyService.kt` and
+`SshTunnelClient.kt` bind every SOCKS5 listener to `127.0.0.1`; the
+`EXTRA_SHARE_PROXY` handling and the `0.0.0.0` branches are gone; the channel
+methods `setProxySharing`, `isProxySharingEnabled`, `connectProxyShared` and
+`getLocalIpAddresses` are gone; and `mobile.go` no longer exports
+`SetShareProxy`, `IsShareProxyEnabled` or `GetLocalIPAddresses`. The listener
+inventory over `android/`, `go_src/` and `lib/` records the remaining wildcard
+binds as a port-availability probe and outbound UDP sockets, not SOCKS5
+listeners. `CODE_REVIEW.md` item 3 is resolved.
 
-- `android/app/src/main/kotlin/xyz/dnstt/app/DnsttProxyService.kt:183`
-- `android/app/src/main/kotlin/xyz/dnstt/app/SlipstreamProxyService.kt:125`
-- `android/app/src/main/kotlin/xyz/dnstt/app/SshTunnelClient.kt:139`
-
-No Dart code calls `connectProxyShared` or `setProxySharing` (the platform
-channel methods of `MainActivity.kt:180` and `:191`), so the mode is
-unreachable from the UI today: the only way in is a direct channel call. The
-decision is to remove the paths rather than to add a password: a shared mode
-needs UI, storage and tests to be useful, and until then the exposed code is
-only a risk.
-
-- Remove the `EXTRA_SHARE_PROXY` handling and the `0.0.0.0` branch in all three
-  services; they always bind `127.0.0.1`.
-- Remove the channel methods `setProxySharing` and `connectProxyShared`, and
-  `DnsttClient.setShareProxy` / `IsShareProxyEnabled` from `mobile.go` with
-  their `ShareProxy` field.
-- Record in `CODE_REVIEW.md` that item 3 is closed by removing the feature, and
-  in `CLAUDE.md` that proxy mode is local-only.
-- If the feature is wanted later, it comes back as a stage of its own: a
-  generated password shown on connect, a warning, and `Socks5AuthRelay` in
-  front of the tunnel client in every mode. The relay already accepts local
-  clients with any credentials and authenticates upstream, so it needs a
-  local-credentials mode rather than a new component.
+If the feature is wanted later, it comes back as a stage of its own: a
+generated password shown on connect, a warning, and `Socks5AuthRelay` in front
+of the tunnel client in every mode. The relay already accepts local clients
+with any credentials and authenticates upstream, so it needs a local-credentials
+mode rather than a new component.
 
 ### 5.2 SSH host key verification: trust on first use
 
