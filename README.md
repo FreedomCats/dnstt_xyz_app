@@ -79,12 +79,12 @@ google-chrome --proxy-server="socks5://127.0.0.1:7000"
 ### Prerequisites
 
 - Flutter SDK 3.x+
-- Android SDK (API 21+) with NDK
+- Android SDK with NDK 28.2.13676358
 - Go 1.21+
 - gomobile: `go install golang.org/x/mobile/cmd/gomobile@latest`
 - Java JDK 17
 - Rust toolchain (for Slipstream): [https://rustup.rs](https://rustup.rs)
-- cargo-ndk (for Android Slipstream): `cargo install cargo-ndk`
+- cargo-ndk 4.1.2 (for Android Slipstream): `cargo install cargo-ndk --version 4.1.2 --locked`
 
 ### Build Android
 
@@ -92,6 +92,10 @@ google-chrome --proxy-server="socks5://127.0.0.1:7000"
 # Clone the repository (with submodules for Slipstream source)
 git clone --recursive https://github.com/dnstt-xyz/dnstt_xyz_app.git
 cd dnstt_xyz_app
+
+# Build the Go AAR and the three Slipstream Android executables
+./scripts/build_aar.sh
+./scripts/build_slipstream_android.sh
 
 # Install Flutter dependencies
 flutter pub get

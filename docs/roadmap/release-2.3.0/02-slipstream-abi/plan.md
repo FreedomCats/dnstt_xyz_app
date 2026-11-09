@@ -148,7 +148,7 @@ script validates every stamp, and the next run after this script change will be
 cold because the builder identity is part of the cache key.
 
 Real problems not fully fixed because of cost: none in the delivered flow. The
-`README.md` Android build section still omits the AAR and Slipstream
-prerequisite steps and keeps an unpinned cargo-ndk; it was already stale for the
-AAR and is outside this stage's scope, while the Gradle guard names the missing
-step.
+`README.md` Android build section omitted the AAR and Slipstream prerequisite
+steps and kept an unpinned cargo-ndk; it was already stale for the AAR and
+outside this stage's scope. It was fixed in a follow-up documentation commit
+together with the pinned cargo-ndk version.
