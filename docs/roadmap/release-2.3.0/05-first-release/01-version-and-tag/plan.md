@@ -136,4 +136,6 @@ missing-key warning:
 
 The tag and the release still need a separate go-ahead: `v2.3.0-beta` has not
 been created or pushed, and `release.yml` has not been started. Its first fully
-green run publishes the release (`create-release` has no draft).
+green run publishes the release (`create-release` has no draft). The user asked
+to hold the publication for now; the node stays `blocked` until they explicitly
+approve the tag and the release run.
