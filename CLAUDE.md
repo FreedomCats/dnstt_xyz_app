@@ -72,7 +72,8 @@ The `slipstream-client` binary runs as a subprocess (not a library). It listens 
 - Go 1.21+ (the toolchain pinned in `go_src/go.mod` is downloaded automatically)
 - Java JDK 17
 - Rust toolchain (for Slipstream): `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-- cargo-ndk (for Android Slipstream): `cargo install cargo-ndk`
+- cargo-ndk 4.1.2 (for Android Slipstream): `cargo install cargo-ndk --version 4.1.2 --locked`
+- Rust Android targets: `rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android`
 
 ## Project Structure
 
@@ -84,9 +85,8 @@ dnstt_app/
 │       │   └── dnstt.aar               # Go dnstt library, built by scripts/build_aar.sh (not in git)
 │       ├── src/main/
 │       │   ├── AndroidManifest.xml
-│       │   ├── jniLibs/
-│       │   │   └── arm64-v8a/
-│       │   │       └── libslipstream_client.so  # Slipstream binary for Android
+│       │   ├── jniLibs/               # generated, ignored by git
+│       │   │   └── <abi>/libslipstream_client.so  # built by scripts/build_slipstream_android.sh
 │       │   └── kotlin/xyz/dnstt/app/
 │       │       ├── MainActivity.kt      # Flutter platform channel bridge
 │       │       ├── DnsttVpnService.kt   # Android VPN service (TUN, tunnel client, tun2socks)
@@ -566,10 +566,14 @@ vet after full Go tests. A failed check prevents the dependent Android APK job.
 `release.yml` also runs the full Dart suite and Kotlin unit tests; it does not
 have an analyzer or explicit Go vet step.
 
-For Android checks, first build `dnstt.aar` with `./scripts/build_aar.sh` and
-generate the Gradle wrapper with `flutter build apk --config-only` if missing:
+For Android checks, first build `dnstt.aar` with `./scripts/build_aar.sh`,
+build and stage the three Slipstream executables with
+`./scripts/build_slipstream_android.sh`, and generate the Gradle wrapper with
+`flutter build apk --config-only` if missing:
 
 ```bash
+./scripts/build_aar.sh
+./scripts/build_slipstream_android.sh
 (cd android && ./gradlew :app:testDebugUnitTest)
 flutter build apk --debug --target-platform android-arm64
 ```
@@ -673,7 +677,11 @@ The dnstt UDP socket may get routed through the VPN despite app exclusion. The c
 ./scripts/build_aar.sh
 git submodule update --init --recursive vendor/hev-socks5-tunnel
 
-# 2. Build Flutter app
+# 2. Build the three Slipstream Android executables (required before any local APK build)
+git submodule update --init --recursive vendor/slipstream-rust
+./scripts/build_slipstream_android.sh
+
+# 3. Build Flutter app
 flutter clean
 flutter pub get
 flutter build apk --release --split-per-abi
@@ -1010,18 +1018,53 @@ This places the binary at:
 
 ### Building for Android (Cross-Compilation)
 
-The Android binary is cross-compiled from Rust to an ARM64 ELF binary and bundled as a native library.
+`scripts/build_slipstream_android.sh` cross-compiles the pinned
+`vendor/slipstream-rust` checkout for three Android ABIs: `arm64-v8a`
+(`aarch64-linux-android`), `armeabi-v7a` (`armv7-linux-androideabi`) and
+`x86_64` (`x86_64-linux-android`). The generated files are not in git.
+
+Prerequisites: Rust with those three targets, cargo-ndk 4.1.2, CMake, make,
+Perl, Git and NDK 28.2.13676358 (from `ANDROID_NDK_HOME`, `ANDROID_NDK_ROOT`, or
+`sdk.dir` in `android/local.properties` plus `ndk/<version>`). Initialize the
+pinned source with the submodule command:
 
 ```bash
-# Prerequisites
-rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
-cargo install cargo-ndk
-
-# Build for all Android architectures
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+cargo install cargo-ndk --version 4.1.2 --locked
+git submodule update --init --recursive vendor/slipstream-rust
 ./scripts/build_slipstream_android.sh
 ```
 
-Output: `android/app/src/main/jniLibs/<abi>/libslipstream_client.so`
+Output: `android/app/src/main/jniLibs/<abi>/libslipstream_client.so` (ignored by
+git). Run the script from the project root before any local Gradle or Flutter
+APK build: `android/app/build.gradle.kts` fails when any of the three files is
+missing, is not a regular file or is empty. The script refuses a source
+checkout that does not match its pinned gitlink, verifies each output's ELF
+machine and mode, runs `scripts/check_binary_paths.sh` on every binary, and
+reuses only stamped per-target picoquic/OpenSSL caches; a missing or
+incompatible stamp fails closed.
+
+**CI and release:** `.github/workflows/build-slipstream-android.yml` is a
+reusable workflow called by `ci.yml` and `release.yml`. It installs the pinned
+NDK and cargo-ndk, restores an exact cache key, builds the three ABIs, checks
+the paths and uploads the `slipstream-android-jni` artifact in the
+`<abi>/libslipstream_client.so` layout. Every consumer job — Kotlin tests, the
+Android APKs and the release APKs — downloads that same-run artifact into
+`android/app/src/main/jniLibs/`, restores `0755` and checks `test -x` before
+each Gradle invocation, because ZIP artifact transport loses the executable
+mode. There is no download fallback. `scripts/check_slipstream_apks.sh`
+verifies that each split APK contains exactly its matching
+`lib/<abi>/libslipstream_client.so`, and CI also runs the machine-path checker
+on the APKs.
+
+**Runtime:** `android:extractNativeLibs="true"` makes Android extract the file
+to disk for subprocess execution. `SlipstreamBridge.init` resolves
+`libslipstream_client.so` under `applicationInfo.nativeLibraryDir` and requires
+it to exist and be executable; `startClient` executes it as a subprocess. The
+instrumentation smoke test in `android/app/src/androidTest` starts the packaged
+executable through the bridge on x86_64 and directly on the accepted
+ARMv7-capable runtime (an x86_64 image with ARM translation); see the task plan
+for the recorded environment limit.
 
 **Important Android notes:**
 - The binary is named `libslipstream_client.so` (lib prefix, .so suffix) so Android's native library loader extracts it
@@ -1036,7 +1079,7 @@ Output: `android/app/src/main/jniLibs/<abi>/libslipstream_client.so`
 | macOS | `macos/Runner/Libraries/slipstream-client` | `Contents/Frameworks/slipstream-client` | Subprocess, signed with `com.apple.security.inherit` entitlement |
 | Windows | `windows/runner/tools/slipstream-client.exe` | Next to `.exe` in install dir | Subprocess |
 | Linux | `linux/tools/slipstream-client` | `<bundle>/lib/slipstream-client` | Subprocess |
-| Android | `jniLibs/arm64-v8a/libslipstream_client.so` | APK `lib/arm64-v8a/` | Subprocess via `SlipstreamBridge.kt` |
+| Android | `jniLibs/<abi>/libslipstream_client.so` | APK `lib/<abi>/` | Subprocess via `SlipstreamBridge.kt`; generated by the Android build script, not committed |
 
 ---
 

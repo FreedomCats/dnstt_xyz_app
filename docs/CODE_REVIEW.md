@@ -132,6 +132,20 @@ TCP, everything else just breaks. ICMP is dropped too.
 CI builds APKs for armeabi-v7a and x86_64, but `jniLibs` contains only
 `arm64-v8a`. Slipstream will not start on those builds.
 
+**Resolved.** No generated Slipstream binary is committed.
+`scripts/build_slipstream_android.sh` builds it from the pinned
+`vendor/slipstream-rust` source for all three ABIs in CI
+(`build-slipstream-android.yml`); the Kotlin-test, APK and release jobs consume
+the same-run `slipstream-android-jni` artifact, and
+`scripts/check_slipstream_apks.sh` checks that each split APK contains exactly
+its matching `lib/<abi>/libslipstream_client.so`. A runtime smoke test starts
+the packaged executable and accepts a local TCP connection on x86_64 and on
+`armeabi-v7a` (on an x86_64 runtime with ARM translation, the accepted
+ARMv7-capable environment). Evidence:
+[03-apk-packaging](roadmap/release-2.3.0/02-slipstream-abi/03-apk-packaging/plan.md)
+and
+[04-android-subprocess-smoke](roadmap/release-2.3.0/02-slipstream-abi/04-android-subprocess-smoke/plan.md).
+
 ### The DNSTT mobile library supports only plain UDP/53
 
 The original `dnstt-client` (`go_src/dnstt-client`) has DoH and DoT with uTLS,

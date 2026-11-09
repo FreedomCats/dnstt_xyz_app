@@ -433,12 +433,27 @@ tested tree equals the reviewed baseline.
 
 ### 5.4 Slipstream binary for all ABIs
 
-Review item 3.3: only `arm64-v8a` has `libslipstream_client.so`, and it is
-prebuilt. Design: build it in CI with `scripts/build_slipstream_android.sh`
-(cargo-ndk, the NDK pinned for the AAR) for `arm64-v8a`, `armeabi-v7a` and
-`x86_64`, cache the Rust target directory between runs, upload the `.so` files
-as an artifact, and run `scripts/check_binary_paths.sh` on them. The APK size
-grows by about 4 MB per ABI.
+Review item 3.3 is closed: generated `libslipstream_client.so` files are no
+longer committed. `scripts/build_slipstream_android.sh` cross-compiles the
+pinned `vendor/slipstream-rust` checkout with cargo-ndk 4.1.2 and NDK
+28.2.13676358 for `arm64-v8a`, `armeabi-v7a` and `x86_64`; it remaps checkout
+and home paths out of the binaries, verifies their ELF machines and runs
+`scripts/check_binary_paths.sh`. Per-target picoquic/OpenSSL caches are reused
+only with a matching source, toolchain and native-settings stamp; anything else
+fails closed.
+
+`build-slipstream-android.yml` runs that script in CI with an exact cache key
+and uploads the `slipstream-android-jni` artifact in the
+`<abi>/libslipstream_client.so` layout. The Kotlin-test, APK and release jobs
+download the same-run artifact into `android/app/src/main/jniLibs/`, restore
+`0755` and check `test -x` before Gradle because ZIP transport drops the mode.
+`android/app/build.gradle.kts` requires all three files for a local APK build,
+so the script must run first; there is no download fallback.
+`scripts/check_slipstream_apks.sh` verifies that each split APK contains exactly
+its matching entry. `SlipstreamBridge.kt` resolves the executable under
+`applicationInfo.nativeLibraryDir`; an instrumentation smoke test starts it on
+x86_64 through the bridge and on the accepted ARMv7-capable runtime (an x86_64
+image with ARM translation) directly. The APK size grows by about 4 MB per ABI.
 
 ## 6. Testing
 
