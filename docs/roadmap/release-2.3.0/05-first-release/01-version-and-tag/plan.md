@@ -1,6 +1,6 @@
 ---
 kind: task
-status: blocked
+status: done
 detailed: true
 ---
 
@@ -119,23 +119,22 @@ user's explicit go-ahead; the tag itself publishes nothing, but its run is what
   in which case the user reports the installed version; nothing from the device
   goes into the repository.
 
-## Blocker
+## Outcome
 
-The local half is committed at `21d5446`: `pubspec.yaml` is `2.3.0+6`, the
-debug APK reports `versionCode 6` and `versionName 2.3.0`, and the local checks
-pass.
-
-The branch has been pushed: `origin/develop` is `21d5446`, and `ci.yml` run
-[42667749110](https://github.com/FreedomCats/dnstt_xyz_app/actions/runs/42667749110)
-on that head is green (`aar`, `slipstream-android`, `test`, `build-android`).
-Its `Show signing certificate` step printed the release certificate, not the
-missing-key warning:
-
-    certificate DN: CN=FreedomCats
-    certificate SHA-256 digest: a0463ae9637d96ee9ad8b8ce305aa62b0c78868fa565d19111f26eca74e0500c
-
-The tag and the release still need a separate go-ahead: `v2.3.0-beta` has not
-been created or pushed, and `release.yml` has not been started. Its first fully
-green run publishes the release (`create-release` has no draft). The user asked
-to hold the publication for now; the node stays `blocked` until they explicitly
-approve the tag and the release run.
+- `pubspec.yaml:5` is `version: 2.3.0+6`, in commit `21d5446`. A local debug
+  APK built from it reported
+  `package: name='xyz.dnstt.app' versionCode='6' versionName='2.3.0'`.
+- `develop` was pushed to `21d5446`, and `ci.yml` run
+  [42667749110](https://github.com/FreedomCats/dnstt_xyz_app/actions/runs/42667749110)
+  on that head was green (`aar`, `slipstream-android`, `test`, `build-android`).
+  Its `Show signing certificate` step printed the project certificate, not
+  the missing-key warning. Certificate SHA-256 digest:
+  `a0463ae9637d96ee9ad8b8ce305aa62b0c78868fa565d19111f26eca74e0500c`.
+- `v2.3.0-beta` is a lightweight tag on `21d5446` (a `commit` object, not an
+  annotated tag), created and pushed once; the remote tag points at the same
+  commit, and no force-push was made.
+- Pushing the tag started `release.yml` (`Build and Release`) run
+  [42682231223](https://github.com/FreedomCats/dnstt_xyz_app/actions/runs/42682231223)
+  on `21d5446`; it was in progress when this task was closed, and no release
+  page existed yet. Whether the release is published is the result of that
+  run, followed by [02-run-release-workflow](../02-run-release-workflow/plan.md).
