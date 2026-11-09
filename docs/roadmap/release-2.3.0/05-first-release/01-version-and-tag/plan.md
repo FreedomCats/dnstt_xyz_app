@@ -1,6 +1,6 @@
 ---
 kind: task
-status: in-progress
+status: blocked
 detailed: true
 ---
 
@@ -118,3 +118,22 @@ user's explicit go-ahead; the tag itself publishes nothing, but its run is what
 - No live server is used. The device is only read in step 1 and may be absent,
   in which case the user reports the installed version; nothing from the device
   goes into the repository.
+
+## Blocker
+
+The local half is committed at `21d5446`: `pubspec.yaml` is `2.3.0+6`, the
+debug APK reports `versionCode 6` and `versionName 2.3.0`, and the local checks
+pass.
+
+The branch has been pushed: `origin/develop` is `21d5446`, and `ci.yml` run
+[42667749110](https://github.com/FreedomCats/dnstt_xyz_app/actions/runs/42667749110)
+on that head is green (`aar`, `slipstream-android`, `test`, `build-android`).
+Its `Show signing certificate` step printed the release certificate, not the
+missing-key warning:
+
+    certificate DN: CN=FreedomCats
+    certificate SHA-256 digest: a0463ae9637d96ee9ad8b8ce305aa62b0c78868fa565d19111f26eca74e0500c
+
+The tag and the release still need a separate go-ahead: `v2.3.0-beta` has not
+been created or pushed, and `release.yml` has not been started. Its first fully
+green run publishes the release (`create-release` has no draft).
