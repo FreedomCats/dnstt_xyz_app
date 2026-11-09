@@ -394,8 +394,8 @@ and a local SOCKS5 proxy listens on `SshTunnelClient.SOCKS5_PROXY_PORT` (1080):
 - The check runs on Android. The desktop path runs the system `ssh` command with host key
   verification disabled (`StrictHostKeyChecking=no`, `UserKnownHostsFile=/dev/null`) and does not
   use the field in this release.
-- "Forget host key" in the config editor clears the field; there is no dialog because the SSH
-  session runs in a service.
+- There is no accept dialog: a changed key is refused, and "Forget host key" in the config
+  editor clears the field so the next connection accepts the new key.
 - In SSH VPN mode `MainActivity` starts `DnsttVpnService` with
   `SshTunnelClient.SOCKS5_PROXY_PORT`; the service starts tun2socks on that port and no tunnel of
   its own.

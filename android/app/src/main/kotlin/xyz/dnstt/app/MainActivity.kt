@@ -651,7 +651,10 @@ class MainActivity : FlutterActivity() {
         result: MethodChannel.Result
     ) {
         if (isSshTunnelRunning.get()) {
-            result.success(SshConnectResult.of(true, sshTunnelClient?.acceptedFingerprint, null))
+            // Do not report the running client's fingerprint: it belongs to the config that
+            // started the client, and Dart would persist it into the config connected now.
+            // The successful connect path already reports and persists it.
+            result.success(SshConnectResult.of(true, null, null))
             return
         }
 
@@ -818,7 +821,10 @@ class MainActivity : FlutterActivity() {
         result: MethodChannel.Result
     ) {
         if (isSshTunnelRunning.get()) {
-            result.success(SshConnectResult.of(true, sshTunnelClient?.acceptedFingerprint, null))
+            // Do not report the running client's fingerprint: it belongs to the config that
+            // started the client, and Dart would persist it into the config connected now.
+            // The successful connect path already reports and persists it.
+            result.success(SshConnectResult.of(true, null, null))
             return
         }
 

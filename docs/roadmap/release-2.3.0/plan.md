@@ -128,7 +128,8 @@ Node: [04-ssh-host-keys](04-ssh-host-keys/plan.md).
 - Done when: on a real server the first connection stores the key, a changed
   key refuses with both fingerprints, forgetting the key lets the new one in;
   the SSH VPN mode starts tun2socks on the SOCKS5 port that listens; unit tests
-  green.
+  green. The user has no SSH server, so the real-server check is moved to the
+  live-checks stage and the stage closes on the unit and local checks.
 - Depends on: nothing.
 - Risks and what is needed from the user: a changed key blocks the user until
   they forget it (accepted); import/export must carry the field. The SSH VPN

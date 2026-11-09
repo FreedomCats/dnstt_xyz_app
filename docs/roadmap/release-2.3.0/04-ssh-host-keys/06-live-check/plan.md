@@ -1,6 +1,6 @@
 ---
 kind: task
-status: todo
+status: dropped
 depends: [01-tofu-host-key-repository, 02-ssh-vpn-port-fix, 03-config-fingerprint, 04-connect-wiring]
 ---
 
@@ -64,3 +64,12 @@ closes on the unit tests and local checks, as its risks allow.
   06. In that case this node is dropped with a note, not marked done.
 - The SSH VPN path is the one the stage 03 acceptance found broken; check the
   data path, not only the connection message.
+
+## Dropped
+
+The user has no SSH server, so this check cannot run in this stage. It is moved
+to [06-live-checks](../../06-live-checks/plan.md), which already lists the SSH
+mode and host-key verification; that stage will need an SSH server (the user's
+or a test one) reachable through the tunnel. The Android unit tests, the channel
+tests and the local checks cover the repository and the wiring; the real
+handshake remains unverified until the live-checks stage.

@@ -71,9 +71,9 @@ On Android the app verifies the SSH host key instead of accepting any key. The
 first connection to a server remembers its key fingerprint in the config
 (`sshHostKeyFingerprint`); later connections accept the same key and refuse a
 different one. A refusal names both fingerprints and asks the user to forget
-the key in the config editor if the server really changed. The SSH client runs
-in a background service, so there is no dialog: the config editor's "Forget
-host key" action clears the field, and the next connection accepts the new key.
+the key in the config editor if the server really changed. There is no accept
+dialog: a changed key is refused, and the config editor's "Forget host key"
+action clears the field so the next connection accepts the new key.
 
 The check is implemented by `SshHostKeyRepository.kt`, a JSch
 `HostKeyRepository` wired into `SshTunnelClient`. The fingerprint format is the

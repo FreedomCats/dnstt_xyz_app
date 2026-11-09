@@ -258,8 +258,9 @@ confirmation dialog. An empty value shows the trust-on-first-use hint, and
 there is no input for typing or pasting a fingerprint. Saving writes the value
 for an SSH config and null for SOCKS5, symmetrically for a new and an existing
 config; changing the domain, public key or transport type keeps it, switching
-the tunnel type to SOCKS5 clears it. No platform check is added: desktop still
-relies on the system `ssh` and `known_hosts`, which task 05 documents.
+the tunnel type to SOCKS5 clears it. No platform check is added: the field has
+no effect on desktop, where the system `ssh` runs with host key verification
+disabled, as task 05 documents.
 
 `AppState.importDnsttConfigs` keeps the locally stored fingerprint for a
 duplicate found by domain and public key; only the name follows the import.
