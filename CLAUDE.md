@@ -376,10 +376,29 @@ The Android VPN service that:
 - Creates the TUN interface: `198.18.0.1/32` and `fc00::1/128`, routes `0.0.0.0/0` and `::/0`
   (no IPv6 bypasses the VPN), DNS server `198.18.0.2`, MTU 8500
 - Excludes the app itself from VPN routing (so the tunnel client's packets bypass the VPN)
-- Starts the tunnel client (DNSTT, Slipstream; SSH mode uses the proxy MainActivity started),
+- Starts the tunnel client (DNSTT, Slipstream; SSH mode uses the SOCKS5 proxy that
+  `MainActivity`/`SshTunnelClient` started on
+  `SshTunnelClient.SOCKS5_PROXY_PORT` and starts no tunnel of its own),
   verifies it with an HTTP request through its SOCKS5 port, then starts the tun2socks engine on
   the TUN fd (`Tun2Socks`)
 - On disconnect or revoke stops the engine before closing the TUN, then the tunnel client
+
+### SshTunnelClient.kt / SshHostKeyRepository.kt
+
+SSH-over-DNSTT mode. The app starts a DNSTT client on `127.0.0.1:7001`, JSch connects to it,
+and a local SOCKS5 proxy listens on `SshTunnelClient.SOCKS5_PROXY_PORT` (1080):
+- `SshHostKeyRepository` implements trust on first use: the config field
+  `sshHostKeyFingerprint` holds `SHA256:` plus unpadded base64 of the server key, the value
+  `ssh-keygen -lf` prints. The first connection stores it, the same key is accepted later, and a
+  different key refuses with both fingerprints.
+- The check runs on Android. The desktop path runs the system `ssh` command with host key
+  verification disabled (`StrictHostKeyChecking=no`, `UserKnownHostsFile=/dev/null`) and does not
+  use the field in this release.
+- "Forget host key" in the config editor clears the field; there is no dialog because the SSH
+  session runs in a service.
+- In SSH VPN mode `MainActivity` starts `DnsttVpnService` with
+  `SshTunnelClient.SOCKS5_PROXY_PORT`; the service starts tun2socks on that port and no tunnel of
+  its own.
 
 ### Tun2Socks.kt / TProxyService.kt
 

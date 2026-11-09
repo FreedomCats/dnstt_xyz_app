@@ -1,6 +1,6 @@
 ---
 kind: task
-status: todo
+status: done
 depends: [01-tofu-host-key-repository, 02-ssh-vpn-port-fix, 03-config-fingerprint, 04-connect-wiring]
 ---
 
@@ -18,7 +18,9 @@ description, which the code review itself notes.
 This task changes documentation only. It closes the review item after tasks
 01-04 are accepted; the live check is [06-live-check](../06-live-check/plan.md)
 and may be deferred, so the closure must cite the unit test and the code, not a
-real-server run.
+real-server run. The user accepted the Android-only guarantee for this release:
+the desktop path is documented as not verifying host keys, and desktop TOFU is
+a separate later stage.
 
 ## Steps
 
@@ -37,8 +39,10 @@ real-server run.
      config if the server really changed" hint; there is no dialog; the config
      editor's "Forget host key" clears the field.
    - State the platform split: Android uses JSch and the config field; desktop
-     uses the system `ssh` command and OpenSSH's `known_hosts`, so the config
-     field is Android-only.
+     runs the system `ssh` with `StrictHostKeyChecking=no` and
+     `UserKnownHostsFile=/dev/null`, so desktop does not verify host keys in
+     this release and the fingerprint is Android-only. Desktop TOFU is a
+     separate later stage.
    - Describe SSH VPN mode: `MainActivity` starts `DnsttVpnService` with
      `SshTunnelClient.SOCKS5_PROXY_PORT`, and the service starts tun2socks on
      that port because it does not start a tunnel in SSH mode.
@@ -75,12 +79,13 @@ real-server run.
 
 - `docs/SSH_TUNNEL_ARCHITECTURE.md` matches the implemented ports, the new
   config field, the TOFU behavior, the refusal message and the Android/desktop
-  split.
+  split, including that desktop does not verify host keys in this release.
 - `CLAUDE.md` describes the SSH client and repository under Key Components and
   corrects the `DnsttVpnService` SSH-mode bullet.
 - `docs/CODE_REVIEW.md` item 4 is marked resolved with evidence from tasks
   01-04 and names the live check as the remaining real-server step if it is
-  deferred; it is not closed on the plan alone.
+  deferred; it is not closed on the plan alone. The desktop gap is stated, not
+  implied away.
 - Only those three documents changed; no dates, environment or device details,
   servers, resolvers or addresses are present.
 
@@ -94,3 +99,27 @@ real-server run.
 - The desktop SSH path is not covered by the config field; do not claim it is.
   If a later stage wants desktop TOFU, it is a separate change.
 - No user action, server or device is needed for this documentation task.
+
+## Outcome
+
+- `docs/SSH_TUNNEL_ARCHITECTURE.md` now matches the code: the DNSTT tunnel is
+  `127.0.0.1:7001`, the SOCKS5 proxy is `127.0.0.1:1080` via
+  `SshTunnelClient.SOCKS5_PROXY_PORT`, the obsolete `sshLocalPort` row is gone,
+  `sshHostKeyFingerprint` is documented, and a "Host key verification" section
+  describes the TOFU repository, the refusal with both fingerprints, the
+  editor's "Forget host key" and the SSH VPN port flow. It states that the
+  guarantee is Android-only in this release: desktop runs the system `ssh` with
+  verification disabled and does not use the field.
+- `CLAUDE.md` has an `SshTunnelClient.kt / SshHostKeyRepository.kt` component
+  section and the `DnsttVpnService` bullet now names the shared SOCKS5 port and
+  the fact that SSH mode starts no tunnel of its own.
+- `docs/CODE_REVIEW.md` item 4 has a `**Resolved.**` paragraph citing the
+  repository unit test and the channel/config tasks, marks the live check as
+  the remaining real-server step, and states the desktop gap. The false note
+  that the SSH mode is not described in `CLAUDE.md` and the matching
+  documentation-bullet claim are removed.
+- The root and stage wording now says "on Android" for the host-key guarantee
+  and records the desktop limitation, per the user's decision.
+- Documentation only; no code, test, workflow or dependency changed. The final
+  diff contains the three documents plus the roadmap plan updates. No dates,
+  environment or device details, servers, resolvers or addresses were added.

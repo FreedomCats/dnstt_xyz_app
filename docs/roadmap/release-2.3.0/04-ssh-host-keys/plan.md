@@ -9,11 +9,12 @@ base: 9ee970ea8843beb4fff6e66462732b40a054030d
 ## Goal
 
 An SSH connection through the tunnel no longer accepts a substituted server
-key, and the SSH VPN mode actually works: the tunnel service points tun2socks
-at the SOCKS5 port that `SshTunnelClient` binds. Today `SshTunnelClient.kt`
-uses JSch with the default host key repository, which accepts any key, and
-`MainActivity.startVpnServiceForSsh` passes port 7000 while the SOCKS5 proxy
-listens on 1080.
+key on Android, and the SSH VPN mode actually works: the tunnel service points
+tun2socks at the SOCKS5 port that `SshTunnelClient` binds. Today
+`SshTunnelClient.kt` uses JSch with the default host key repository, which
+accepts any key, and `MainActivity.startVpnServiceForSsh` passes port 7000 while
+the SOCKS5 proxy listens on 1080. The desktop SSH path runs the system `ssh`
+without host key verification in this release; it is documented and deferred.
 
 The scheme is decided: trust on first use, with a refusal when the key changes
 and both fingerprints named. There is no dialog — the session lives in a
@@ -62,12 +63,15 @@ Children, in order:
 
 ## Done when
 
-- On a real server the first connection stores the key; a changed key refuses
-  and names both fingerprints; forgetting the key lets the new one in.
+- On Android, on a real server the first connection stores the key; a changed
+  key refuses and names both fingerprints; forgetting the key lets the new one
+  in.
 - The unit test is green, and the existing Android unit test suite still passes.
 - The SSH VPN mode starts `DnsttVpnService` with the SOCKS5 port
   `SshTunnelClient` actually binds; a build or test check prevents the two
   values from drifting apart again.
+- The desktop SSH path's lack of host key verification is documented; desktop
+  TOFU is a separate later stage.
 
 ## Depends on
 

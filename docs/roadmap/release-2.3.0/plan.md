@@ -53,7 +53,8 @@ real server and device yet — that is node 6 of this map.
 - `libslipstream_client.so` is built in CI for `arm64-v8a`, `armeabi-v7a` and
   `x86_64`, and Slipstream connects from an APK of each ABI.
 - No code path in the app binds a SOCKS5 listener to anything but `127.0.0.1`.
-- An SSH connection refuses a changed host key and names both fingerprints.
+- In the Android app, an SSH connection refuses a changed host key and names both
+  fingerprints; the desktop SSH path's lack of verification is documented.
 - A signed release `v2.3.0-beta` is published from CI, installs on the device,
   and its version code is higher than the installed one.
 - The live checks of DoH/DoT, VPN mode with tun2socks, upstream auth and SSH

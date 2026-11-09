@@ -23,8 +23,7 @@ Modes:
 - **Android:** device-wide VPN (TUN traffic is parsed into TCP by hand and sent
   to SOCKS5) or a plain local SOCKS5 proxy.
 - **Desktop:** SOCKS5 on `127.0.0.1:7000` only.
-- **SSH over DNSTT** (`SshTunnelClient.kt`, JSch library). This mode is not
-  described in CLAUDE.md.
+- **SSH over DNSTT** (`SshTunnelClient.kt`, JSch library).
 
 About 20k lines. Largest files: `lib/screens/dns_management_screen.dart`
 (1539), `lib/services/vpn_service.dart` (1429), `MainActivity.kt` (1230),
@@ -86,6 +85,20 @@ not protected against impersonation.
 
 **Fix:** at least remember the key fingerprint on first connection and verify
 it afterwards (TOFU).
+
+**Resolved.** The Android app now installs a trust-on-first-use
+`HostKeyRepository` (`SshHostKeyRepository.kt`): the first connection stores
+the `SHA256:` fingerprint in the config field `sshHostKeyFingerprint`, the same
+key is accepted later, and a changed key refuses the connection with both
+fingerprints and the "forget the host key in the config" hint. The config
+editor has "Forget host key". Evidence: the unit test in
+[01-tofu-host-key-repository](roadmap/release-2.3.0/04-ssh-host-keys/01-tofu-host-key-repository/plan.md)
+and the channel/config tasks around it. The real-server check is the
+[06-live-check](roadmap/release-2.3.0/04-ssh-host-keys/06-live-check/plan.md)
+node or moves to the live-checks stage; this paragraph does not claim a
+real-server run. The desktop SSH path is not covered in this release: it runs
+the system `ssh` with host key verification disabled, documented in
+`docs/SSH_TUNNEL_ARCHITECTURE.md`; desktop TOFU is a separate later change.
 
 ### 5. Release builds are signed with the debug key
 
@@ -186,7 +199,7 @@ download (`GOTOOLCHAIN=auto`).
   is logged. For a censorship circumvention tool this is better disabled in
   release builds.
 - **Documentation:** CLAUDE.md and README point to upstream rather than the
-  fork and do not mention the SSH mode.
+  fork.
 
 ## Suggested order of work
 

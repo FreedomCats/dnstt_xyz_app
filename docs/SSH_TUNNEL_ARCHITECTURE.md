@@ -19,7 +19,7 @@ The SSH tunnel mode provides an alternative to the standard SOCKS5 proxy mode. I
 │              Uses: sshUsername, sshPassword                     │
 │                      │                                          │
 │                      ▼                                          │
-│              DNSTT Client (127.0.0.1:7000)                      │
+│              DNSTT Client (127.0.0.1:7001)                      │
 │              Uses: publicKey, tunnelDomain                      │
 │                      │                                          │
 └──────────────────────┼──────────────────────────────────────────┘
@@ -63,7 +63,26 @@ A single config contains both DNSTT and SSH settings:
 | `sshUsername` | SSH username for authentication |
 | `sshPassword` | SSH password (optional if using key) |
 | `sshPrivateKey` | SSH private key in OpenSSH format (optional) |
-| `sshLocalPort` | Local SOCKS5 proxy port (default: 1080) |
+| `sshHostKeyFingerprint` | SHA-256 host key fingerprint (`SHA256:` + unpadded base64, the value `ssh-keygen -lf` prints); empty means trust on first use. Android only. |
+
+## Host key verification
+
+On Android the app verifies the SSH host key instead of accepting any key. The
+first connection to a server remembers its key fingerprint in the config
+(`sshHostKeyFingerprint`); later connections accept the same key and refuse a
+different one. A refusal names both fingerprints and asks the user to forget
+the key in the config editor if the server really changed. The SSH client runs
+in a background service, so there is no dialog: the config editor's "Forget
+host key" action clears the field, and the next connection accepts the new key.
+
+The check is implemented by `SshHostKeyRepository.kt`, a JSch
+`HostKeyRepository` wired into `SshTunnelClient`. The fingerprint format is the
+one `ssh-keygen -lf` prints, so a user can compare it with the server's key.
+
+This release covers Android only: the desktop SSH path starts the system `ssh`
+command with `StrictHostKeyChecking=no` and `UserKnownHostsFile=/dev/null` and
+does not use the config fingerprint. Desktop host key verification is a
+separate later change.
 
 ## Advantages of SSH Tunnel Mode
 
@@ -75,5 +94,13 @@ A single config contains both DNSTT and SSH settings:
 ## Implementation Details
 
 - **Android**: Uses [JSch](https://github.com/mwiede/jsch) library for SSH client functionality
-- **DNSTT**: Creates TCP tunnel on `127.0.0.1:7000` that forwards to SSH server port 22
+- **DNSTT**: Creates TCP tunnel on `127.0.0.1:7001` that forwards to SSH server port 22
 - **SSH**: Connects through the DNSTT tunnel and implements dynamic port forwarding (equivalent to `ssh -D`)
+- **SOCKS5**: The local proxy listens on `127.0.0.1:1080` (`SshTunnelClient.SOCKS5_PROXY_PORT`)
+- **Host key**: `SshHostKeyRepository.kt` (JSch `HostKeyRepository`) implements
+  trust on first use as described above
+- **SSH VPN mode**: `MainActivity` starts `DnsttVpnService` with
+  `SshTunnelClient.SOCKS5_PROXY_PORT`; the service starts tun2socks on that
+  port and starts no tunnel of its own
+- **Desktop**: runs the system `ssh` command; it does not verify host keys in
+  this release (see "Host key verification")
