@@ -1,6 +1,6 @@
 ---
 kind: task
-status: blocked
+status: done
 detailed: true
 depends: [01-android-cross-build]
 ---
@@ -181,11 +181,11 @@ every affected Gradle invocation, including Kotlin unit tests; task 04 proves
 Android extraction/subprocess behavior. Local APK builds continue to require
 the source script, with no remote download fallback.
 
-No secrets or external workflow dispatch are needed. The remote completion
-criterion still needs the user's separate permission to publish the prepared
-commit for normal CI. Until that permission and the resulting run are available,
-report local readiness and the outstanding acceptance step without marking the
-task done. Any newly discovered need to change the accepted script, cache
+The remote completion criterion required separate user permission to publish
+the prepared commit and run normal CI. That permission was granted for the exact
+pushes described below, and the producer and uploaded artifact have been
+verified. It does not authorize any future push, rerun, release, or other remote
+action. Any newly discovered need to change the accepted script, cache
 validation, delivery policy or sibling scope goes back to lead first.
 
 ## Outcome
@@ -264,3 +264,54 @@ validation, delivery policy or sibling scope goes back to lead first.
   and producer artifact. Until then this task remains `blocked`; no push,
   dispatch, rerun, tag, release, PR, force push or other remote action has been
   performed for the correction.
+- The user has now separately authorized one ordinary fast-forward push of
+  exactly local commit `d03d5a1` on top of remote `ac0986d`, and inspection of
+  the single resulting normal `ci.yml` run and producer artifact. A previous
+  push used HTTPS without the authenticated GitHub CLI helper and was rejected;
+  that attempt is distinct from this newly authorized retry. This retry must use
+  a command-scoped `gh auth git-credential` helper, without changing persistent
+  Git configuration or credentials. Only this exact ordinary fast-forward and,
+  if successful, its one normal CI run/artifact inspection are authorized. No
+  rerun, dispatch, tag, release, PR, force push, later push or other remote write
+  is included.
+- The one command-scoped-helper push succeeded and remote `develop` advanced to
+  exact SHA `d03d5a1d63ee40dcd4d7ef6d2df92914e170b232`. Its sole normal `ci.yml`
+  run `42532923754` (event `push`, branch `develop`) completed successfully:
+  producer `128890910980`, AAR `128890911219`, test `128891278786`, and Android
+  build `128892797065`. The test job passed analyzer, all 75 Dart tests, Kotlin
+  unit tests, full Go tests and vet. The Android job passed split APK builds,
+  machine-path/signature checks and artifact upload.
+- The producer artifact `slipstream-android-jni` (ID `13637958775`, from the
+  exact run/head) downloaded and passed ZIP integrity checks. It contains exactly
+  `arm64-v8a/libslipstream_client.so`,
+  `armeabi-v7a/libslipstream_client.so`, and
+  `x86_64/libslipstream_client.so`, with no wrapper or extra entry. The downloaded
+  ZIP SHA-256 `d09d1b1ba7ea8b6affede5459a656bcefb32b67cb910c284a0c82f96900242ca`
+  exactly matches the upload action's recorded digest.
+- Recomputed per-file SHA-256 values are `8ff4a8fe9ed2ddf45f52c08d0d59f7fb701ce0d86a31acf2c455f6b3ac5ca27d`
+  (arm64-v8a), `60c2721d678f58ecb0c317d2bdf342fcd884ebdb78603e8b2c41201354a0e6b7`
+  (armeabi-v7a), and `ec48bbb5099dd679fd91e468835f2665d2408146d8944f7ee78d6b8099cd2417`
+  (x86_64). GitHub's per-file `GITHUB_STEP_SUMMARY` text is not exposed by the
+  available read-only API, so these values could not be compared literally with
+  the summary lines. Instead, the downloaded ZIP digest matches the digest
+  recorded for the uploaded archive, and each extracted file is byte-identical
+  to its independently checked task 01 build output. This verifies the uploaded
+  payload contents without claiming direct access to the summary text.
+- Artifact files are regular, non-empty executables with sizes 5,917,936,
+  3,983,300, and 6,622,088 bytes. `readelf` confirmed AArch64, ARM and X86-64,
+  Android interpreters `/system/bin/linker64`, `/system/bin/linker`, and
+  `/system/bin/linker64`, and Android build note NDK r28c / build `13676358`.
+  ZIP extraction did not preserve executable permissions; after `chmod 0755`,
+  `test -x` passed for all three downloaded copies. The producer's path checker
+  also reported `ok` for every staged binary.
+- This first CI producer run had an exact-cache miss, built and uploaded all
+  outputs, then saved the successful cache. A warm CI restore has not been
+  observed and is not claimed. The local cold/warm source builds and task 01
+  cache tests remain the evidence for script cache reuse.
+- Task 02 is complete. The initial producer linker failure was corrected by
+  selecting the runner host linker for host build scripts while preserving
+  cargo-ndk's Android target linkers. No generated binary or vendored source was
+  committed. There are no real problems left unfixed because of repair cost.
+  Unavailable optional `actionlint`/`yamllint`, the pre-existing `SC2012` in an
+  unchanged certificate step, and the skipped optional host bridge integration
+  test are recorded above; all required CI jobs and artifact checks passed.
