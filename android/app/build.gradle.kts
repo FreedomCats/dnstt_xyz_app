@@ -55,6 +55,8 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         externalNativeBuild {
             ndkBuild {
                 // Only the JNI library; the module also defines a standalone executable
@@ -166,4 +168,9 @@ dependencies {
     implementation("com.github.mwiede:jsch:0.2.18")
 
     testImplementation("junit:junit:4.13.2")
+
+    // Instrumentation smoke test for the packaged slipstream-client executable
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:core-ktx:1.6.1")
 }
