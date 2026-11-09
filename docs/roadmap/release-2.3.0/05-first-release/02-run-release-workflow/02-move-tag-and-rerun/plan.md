@@ -101,10 +101,19 @@ from a commit whose ordinary gate is red.
 
 ## Open question
 
-The macOS remap fix is committed at `c9019d0`; static checks pass, and the
-tracked `macos/Runner/Libraries/slipstream-client` and the vendored tree are
-unchanged. The user must authorize the fast-forward push of `develop` and the
-`ci.yml` run; the tag move (`git tag -f v2.3.0-beta <green head>` and
-`git push --force origin refs/tags/v2.3.0-beta`) is a separate go-ahead after
-that run is green. Nothing has been pushed and the remote tag still points at
-`21d5446`.
+Steps 1–4 are done. The macOS remap fix is published: remote `develop` is
+`f74e7d5` (the fix `c9019d0` above `21d5446`, with the tracked
+`macos/Runner/Libraries/slipstream-client` unchanged), and the ordinary gate is
+green on exactly that head: `ci.yml` run `42690405232`
+(https://github.com/FreedomCats/dnstt_xyz_app/actions/runs/42690405232) is
+`completed`/`success` with all four jobs green — `aar`, `slipstream-android`,
+`test`, `build-android`.
+
+The remote tag `v2.3.0-beta` still points at `21d5446`, the first run
+`42682231223` is still the only `release.yml` run and remains terminal
+`failure`, and no release page exists. Waiting for a separate explicit
+go-ahead that covers only this move: `git tag -f v2.3.0-beta f74e7d5` and
+`git push --force origin refs/tags/v2.3.0-beta`, and then following the second
+`Build and Release` run for the tag, which publishes the release page when
+green. The old run is not rerun; nothing else is pushed, dispatched or
+cancelled.
