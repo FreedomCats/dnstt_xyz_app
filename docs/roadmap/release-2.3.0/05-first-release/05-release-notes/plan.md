@@ -1,6 +1,7 @@
 ---
 kind: task
-status: todo
+status: done
+detailed: true
 depends: [02-run-release-workflow, 03-verify-artifacts]
 ---
 
@@ -68,6 +69,35 @@ the user and apply it only with the explicit go-ahead.
   macOS ad-hoc signing caveat and the absent Windows and Linux builds.
 - The text was shown to the user and applied with the go-ahead; the page was
   re-read after the edit.
+
+## Outcome
+
+- The frame was checked before the edit: tag `v2.3.0-beta`, the lightweight tag
+  and `target_commitish` both at
+  `f74e7d58edcb4dae97dcdd3041d1d0bf7f8593c3`, `draft: false`, `prerelease: true`,
+  and five assets under the README names.
+- The old body had exactly one SHA-256 line and it carried the digest verified
+  in [03](../03-verify-artifacts/plan.md)
+  (`a0463ae9637d96ee9ad8b8ce305aa62b0c78868fa565d19111f26eca74e0500c`), so there
+  was no defect to report. It was the upstream template from
+  `release.yml:526-561` and said nothing about DoH/DoT, tun2socks, the shared
+  application ID, the macOS signature or the absent Windows and Linux builds.
+- The new body was shown to the user and applied verbatim after the go-ahead
+  (`gh release edit --notes-file`, body only). It states what 2.3.0 adds, the
+  export-and-uninstall caveat for Android, the ad-hoc macOS signature, the
+  absent desktop builds, the `apksigner` check with the digest above and the
+  known limits of the beta.
+- Re-read after the edit: the body equals the applied file byte for byte, it
+  carries the digest once, the five assets keep their names, sizes and
+  `uploaded` state, and the tag, the target and the pre-release flag are
+  unchanged.
+- The applied text lives on the page only; the draft stays in
+  `docs/local/release-notes-v2.3.0-beta.md`, outside git, as the task requires.
+- Left outside this node: `release.yml:526-561` still holds the old template, so
+  the next release would start from it again — replacing it is a separate node.
+  `README.md:41` links to the upstream releases page rather than this project's,
+  and `README.md:56-57` promises Windows and Linux files that the release does
+  not contain.
 
 ## Risks and what is needed from the user
 

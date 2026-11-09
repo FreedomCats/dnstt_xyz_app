@@ -1,6 +1,7 @@
 ---
 kind: task
-status: todo
+status: blocked
+detailed: true
 depends: [03-verify-artifacts]
 ---
 
@@ -43,7 +44,11 @@ nothing" case of the map.
    step 1, `adb uninstall xyz.dnstt.app` and install again. Record which of the
    two happened, so the release notes and the report can name it.
 5. Verify what got installed. `adb shell dumpsys package xyz.dnstt.app | grep
-   -E 'versionCode|versionName'` must report 6 and 2.3.0. If
+   -E 'versionCode|versionName'` must report `versionName` 2.3.0 and the split's
+   own code: 1006 for `armeabi-v7a`, 2006 for `arm64-v8a`, 4006 for `x86_64`.
+   The base `6` from `pubspec.yaml` is not the code of a split APK: Flutter adds
+   `ABI*1000` for `--split-per-abi`, as
+   [03](../03-verify-artifacts/plan.md) found on the published files. If
    `adb shell pm path xyz.dnstt.app` and `adb pull` of that file are permitted,
    check its certificate SHA-256 with `apksigner` and compare it with the
    release digest from [03](../03-verify-artifacts/plan.md). If the pull is
@@ -61,14 +66,24 @@ nothing" case of the map.
 
 ## Done when
 
-- `xyz.dnstt.app` is installed on the device with versionCode 6 and versionName
-  2.3.0; its certificate is either read back as the release digest or proven by
-  a successful install of the verified file, and the report says which of the
-  two.
+- `xyz.dnstt.app` is installed on the device with the ABI's split code (1006,
+  2006 or 4006) and versionName 2.3.0; its certificate is either read back as
+  the release digest or proven by a successful install of the verified file, and
+  the report says which of the two.
 - The app starts and shows its main screen, with no fatal error in the log at
   startup.
 - The user confirms the install and the start; the report records whether the
   install was an in-place update or followed an export and an uninstall.
+
+## Blocked
+
+The user is busy and will not install anything now. The task waits for the
+device: the install and the first launch are the user's actions, and the agent
+only prepares the commands and reads the results. Nothing in steps 1–7 has been
+done; the release APKs are verified and ready in
+[03](../03-verify-artifacts/plan.md). Resume when the user has the phone with
+USB debugging available, or when the user installs the file from the release
+page and reports the result.
 
 ## Risks and what is needed from the user
 
