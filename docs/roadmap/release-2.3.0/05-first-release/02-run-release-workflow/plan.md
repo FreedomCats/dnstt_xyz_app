@@ -1,6 +1,7 @@
 ---
 kind: stage
-status: todo
+status: in-progress
+base: 21d5446dc4c07d10ad0a2a546135ab0b13f45b71
 depends: [01-version-and-tag]
 ---
 
@@ -39,11 +40,24 @@ draft step to catch mistakes.
   [01-version-and-tag](../01-version-and-tag/plan.md); a fix that would drop a
   platform from the release is a user decision.
 
-Children, in order: not planned yet. The failures are unknown and they set the
-split. If the first run is fully green, this stage has no children. If it
-fails, the likely nodes are the Android job with `create-release`, the macOS
-arm64 job and the macOS Intel job, each only if it needs work of its own; the
-stage is planned again from the first failing run.
+Children, in order:
+
+1. [01-macos-path-remap](01-macos-path-remap/plan.md) (task): build
+   `slipstream-client` in both macOS jobs through one script that remaps the
+   C/C++ compilation and the OpenSSL module strings the way
+   `scripts/build_slipstream_android.sh` does, and check the built binary
+   before it replaces the tracked file.
+2. [02-move-tag-and-rerun](02-move-tag-and-rerun/plan.md) (task): publish the
+   fix, wait for green `ci.yml` on the fixed head, then re-create the
+   lightweight tag there and follow the second `release.yml` run. The branch
+   push and the tag move are outward actions and need the user's explicit
+   go-ahead.
+
+The `aar`, `slipstream-android` and `build-android` jobs passed and
+`create-release` was not reached, so they get no children while they stay
+green. If the second run fails in another step, the stage is planned again from
+that run's log: the fix nodes are added after 02, each with its own failing
+step and evidence.
 
 ## Done when
 
