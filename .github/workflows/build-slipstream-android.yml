@@ -73,6 +73,14 @@ jobs:
           test -n "${ImageOS:-}"
           test -n "${ImageVersion:-}"
           test "$ANDROID_NDK_HOME" = "$ANDROID_NDK_ROOT"
+          host_target="$(rustc -vV | sed -n 's/^host: //p')"
+          test -n "$host_target"
+          host_linker="$(command -v cc)"
+          host_linker_path="$(realpath "$host_linker")"
+          test -x "$host_linker_path"
+          host_linker_env="CARGO_TARGET_${host_target//-/_}_LINKER"
+          host_linker_env="${host_linker_env^^}"
+          printf '%s=%s\n' "$host_linker_env" "$host_linker_path" >> "$GITHUB_ENV"
 
           # Keep these stamp inputs and native_context identical to the script.
           SCRIPT_DIR="$(cd scripts && pwd)"
@@ -109,11 +117,12 @@ jobs:
           # Paths and full tool output stay in a private manifest, never the summary.
           manifest="$(mktemp "$RUNNER_TEMP/slipstream-android-cache.XXXXXX")"
           {
-            printf '%s\n' 'cache-schema=slipstream-android-v1' \
+            printf '%s\n' 'cache-schema=slipstream-android-v2' \
               "runner-os=$RUNNER_OS" "runner-arch=$RUNNER_ARCH" \
               "image-os=$ImageOS" "image-version=$ImageVersion" \
               "source-path=$source_path" "home-path=$home_path" \
               "ndk-path=$ANDROID_NDK_HOME" "workflow=$workflow_identity" \
+              "host-target=$host_target" "host-linker-path=$host_linker_path" \
               "rustc-path=$rustc_path" "cargo-path=$cargo_path" "toolchain=$active_toolchain" \
               'profile=release' 'package=slipstream-client' 'features=openssl-vendored' 'locked=true'
             for i in "${!ABIS[@]}"; do
@@ -140,6 +149,7 @@ jobs:
           record_tool cargo --version --verbose
           record_tool cargo-ndk --version
           record_tool rustup --version
+          record_tool "$host_linker_path" --version
           record_tool cmake --version
           record_tool make --version
           record_tool perl -V
@@ -158,7 +168,7 @@ jobs:
           git hash-object "$ANDROID_NDK_HOME/source.properties" \
             "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" >> "$manifest"
           digest="$(sha256sum "$manifest")"
-          printf 'key=slipstream-android-v1-%s\n' "${digest%% *}" >> "$GITHUB_OUTPUT"
+          printf 'key=slipstream-android-v2-%s\n' "${digest%% *}" >> "$GITHUB_OUTPUT"
           printf 'source=%s\npicoquic=%s\n' "$expected_revision" "$picoquic_revision" >> "$GITHUB_OUTPUT"
 
           versions="$(mktemp "$RUNNER_TEMP/slipstream-android-versions.XXXXXX")"
@@ -167,6 +177,8 @@ jobs:
             rustc --version
             cargo --version
             cargo ndk --version
+            printf 'Host C compiler\n'
+            "$host_linker_path" --version
             cmake --version
             make --version | sed -n '1p'
             perl -e 'printf "Perl %s\n", $^V'

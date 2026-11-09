@@ -209,6 +209,33 @@ validation, delivery policy or sibling scope goes back to lead first.
   SHA-256 values. Workflow comments specify same-run download, explicit mode
   restoration and executable checks before every Gradle invocation; consumers
   remain task 03 scope.
+- The only authorized remote verification so far was normal `ci.yml` run
+  `42526215253`, attempt 1, on push head `ac0986ddc3ad854ca6283930a1a163c1f3467749`.
+  It completed with `failure`: `aar / build` (`128870301582`), `test`
+  (`128870727651`, including Dart analysis/tests, Kotlin tests, Go tests and
+  vet), and `build-android` (`128872126315`, including split APK/path/signing
+  checks and upload) succeeded; `slipstream-android / build`
+  (`128870301868`) failed at `Build all three Android ABIs`. Its exact cache
+  lookup was cold. Cargo linked host build scripts for `x86_64-unknown-linux-gnu`
+  through the temporary `cc` wrapper in the leading script directory, which
+  invokes Android NDK clang; `rust-lld` could not find `gcc_s`, `util`, `rt` or
+  `pthread`, and the step exited 101. The stage, JNI artifact upload and cache
+  save were skipped. The run produced only `dnstt-aar` and `android-apks`, not
+  `slipstream-android-jni`; no JNI artifact inspection or warm cache claim is
+  applicable. The full producer log and terminal metadata are private evidence
+  outside the repository.
+- The producer workflow now explicitly assigns the discovered native host
+  compiler to Cargo's host-triple linker setting while leaving cargo-ndk's
+  Android target linkers intact. Its canonical path and version are included
+  in the private cache manifest/key, with a schema/key version bump. The public
+  summary reports only the compiler version, not its path. The accepted build script,
+  Android target configuration, `ci.yml`, submodules and generated binaries
+  were not changed. A focused host-linker fixture reproduced failure with an
+  Android-like `cc` PATH shim and passed with the explicit host linker; it also
+  checked deterministic cache identity and invalidation on host-linker path or
+  version changes. Workflow YAML parsing, shell syntax, ShellCheck and
+  whitespace checks passed for the correction. No local native ABI rebuild was
+  performed.
 - Local validation passed: both workflow files parse without duplicate YAML
   keys; `bash -n` passed for all 20 embedded shell blocks; all added shell
   blocks passed ShellCheck; and `git diff --check` passed. Focused cache,
@@ -226,9 +253,14 @@ validation, delivery policy or sibling scope goes back to lead first.
   accepted CI-gate probes were not repeated. Task 01's recorded cold/warm
   three-ABI build evidence was reused; generated binaries, the build script,
   gitlinks and vendored sources are unchanged.
-- The required normal GitHub Actions `ci.yml` run at the prepared revision has
-  not been observed, and its uploaded artifact has not been downloaded and
-  inspected. Local checks do not satisfy that criterion. This task therefore
-  remains `blocked` pending separate publication authorization and successful
-  remote producer/artifact verification. No push, dispatch, rerun, release or
-  other remote action was performed.
+- The user authorized exactly one ordinary fast-forward push through
+  `ac0986d` and verification of its resulting normal run. The attempted push
+  failed authentication; no credentials were changed or retry made, and the
+  user then performed the authorized push. Run `42526215253` is terminal and
+  failed only in the new producer as described above; the producer artifact is
+  absent. Remote `develop` remains exactly at `ac0986d`. That authorization is
+  consumed. The local host-linker correction now requires separate permission
+  to publish its new exact head and inspect the resulting normal `ci.yml` run
+  and producer artifact. Until then this task remains `blocked`; no push,
+  dispatch, rerun, tag, release, PR, force push or other remote action has been
+  performed for the correction.
