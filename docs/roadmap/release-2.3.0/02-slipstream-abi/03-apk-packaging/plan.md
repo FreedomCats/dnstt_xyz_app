@@ -138,6 +138,15 @@ they do not fetch remote artifacts. Remote publication/normal-CI verification
 and a release workflow run need new, separately scoped user authorization; the
 producer task's authorization is already consumed.
 
+## Remote acceptance
+
+The authorized implementation history was published by one ordinary
+fast-forward push of exactly `e4e5a9d` and `d0a088c` on top of `d03d5a1`.
+Normal CI run `42545281750` for `d0a088c` completed successfully. The release
+workflow remains separately unverified because it uses signing secrets and can
+publish a release; no release authorization was granted here. No rerun,
+dispatch, tag, PR, force push or other remote action was used.
+
 ## Outcome
 
 - Removed the tracked ARM64 Slipstream executable and ignored every generated
@@ -163,8 +172,22 @@ producer task's authorization is already consumed.
   offline debug APK build also passed in a temporary validation copy; the three
   debug APKs passed the shared content check.
 - `actionlint` and `yamllint` were unavailable and were not installed. No
-  release workflow or native producer rebuild was run. A normal CI run and a
-  release run require separate authorization; their remote acceptance is
-  intentionally pending and must not be inferred from the local validation.
+  release workflow or native producer rebuild was run. Release acceptance
+  remains intentionally pending and must not be inferred from normal CI.
 - Independent review found no correctness, regression, security, or scope
   findings. No generated binary, private data, or vendor change is included.
+- The first authorized push attempt did not reach GitHub because zsh interpreted
+  the unbraced `$head:refs/heads/develop` refspec as a parameter modifier. The
+  corrected attempt used the quoted literal refspec
+  `d0a088c54fa91e3aad47e4be26f9f7498a361b6b:refs/heads/develop` and published
+  only the two authorized commits.
+- The resulting normal CI run `42545281750` succeeded. Producer jobs
+  `128928822939` (`slipstream-android / build`) and `128928823164` (`aar /
+  build`) uploaded `slipstream-android-jni` (artifact `13642623337`) and
+  `dnstt-aar` (artifact `13642853943`). The `test` job `128929369497`
+  downloaded both artifacts from the same run and passed Kotlin unit tests,
+  Dart analysis/tests, Go tests and vet. The `build-android` job
+  `128931061301` downloaded the same-run artifacts, built all three split APKs,
+  passed the shared APK checker and machine-path checker, and uploaded
+  `android-apks` (artifact `13643771980`) containing exactly the three ABI
+  APKs. Release workflow acceptance remains separate and unverified.
