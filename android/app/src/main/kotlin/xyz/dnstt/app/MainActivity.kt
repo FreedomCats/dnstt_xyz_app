@@ -23,7 +23,6 @@ import okhttp3.Request
 import android.net.ConnectivityManager
 import android.util.Log
 import java.net.InetSocketAddress
-import java.net.NetworkInterface
 import java.net.Proxy
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -80,9 +79,6 @@ class MainActivity : FlutterActivity() {
     private var sshDnsttClient: mobile.DnsttClient? = null
     private var sshTunnelClient: SshTunnelClient? = null
     private val isSshTunnelRunning = AtomicBoolean(false)
-
-    // Proxy sharing mode
-    private val isProxySharingEnabled = AtomicBoolean(false)
 
     private data class TestContext(
         val job: Job,
@@ -150,10 +146,9 @@ class MainActivity : FlutterActivity() {
                     val sshUsername = call.argument<String>("sshUsername") ?: ""
                     val sshPassword = call.argument<String>("sshPassword")
                     val sshPrivateKey = call.argument<String>("sshPrivateKey")
-                    val shareProxy = call.argument<Boolean>("shareProxy") ?: false
                     connectSshTunnel(
                         dnsServer, ResolverOptions.from(call), tunnelDomain, publicKey,
-                        sshUsername, sshPassword, sshPrivateKey, shareProxy, result
+                        sshUsername, sshPassword, sshPrivateKey, result
                     )
                 }
                 "connectSshTunnelVpn" -> {
@@ -173,27 +168,6 @@ class MainActivity : FlutterActivity() {
                 }
                 "isSshTunnelConnected" -> {
                     result.success(isSshTunnelRunning.get() && sshTunnelClient?.isConnected() == true)
-                }
-                "getLocalIpAddresses" -> {
-                    result.success(getLocalIpAddresses())
-                }
-                "setProxySharing" -> {
-                    val enabled = call.argument<Boolean>("enabled") ?: false
-                    isProxySharingEnabled.set(enabled)
-                    // Note: If proxy is already running via service, it would need to be restarted
-                    // to change sharing mode. For simplicity, just store the preference.
-                    Log.d("DnsttProxy", "Proxy sharing preference set to: $enabled")
-                    result.success(true)
-                }
-                "isProxySharingEnabled" -> {
-                    result.success(isProxySharingEnabled.get())
-                }
-                "connectProxyShared" -> {
-                    val dnsServer = call.argument<String>("dnsServer") ?: "8.8.8.8"
-                    val tunnelDomain = call.argument<String>("tunnelDomain") ?: ""
-                    val publicKey = call.argument<String>("publicKey") ?: ""
-                    val proxyPort = call.argument<Int>("proxyPort") ?: 7000
-                    connectProxyShared(dnsServer, ResolverOptions.from(call), tunnelDomain, publicKey, proxyPort, socksAuthFrom(call), result)
                 }
                 // Slipstream methods
                 "connectSlipstream" -> {
@@ -407,7 +381,6 @@ class MainActivity : FlutterActivity() {
             putExtra(DnsttProxyService.EXTRA_TUNNEL_DOMAIN, tunnelDomain)
             putExtra(DnsttProxyService.EXTRA_PUBLIC_KEY, publicKey)
             putExtra(DnsttProxyService.EXTRA_PROXY_PORT, proxyPort)
-            putExtra(DnsttProxyService.EXTRA_SHARE_PROXY, false)
             putSocksAuth(socksAuth, DnsttProxyService.EXTRA_SOCKS_USERNAME, DnsttProxyService.EXTRA_SOCKS_PASSWORD)
             resolverOptions.putInto(this)
         }
@@ -422,76 +395,6 @@ class MainActivity : FlutterActivity() {
             action = DnsttProxyService.ACTION_DISCONNECT
         }
         startService(serviceIntent)
-        isProxySharingEnabled.set(false)
-        result.success(true)
-    }
-
-    // Get local IP addresses for proxy sharing display
-    private fun getLocalIpAddresses(): List<String> {
-        val addresses = mutableListOf<String>()
-        try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            while (interfaces.hasMoreElements()) {
-                val networkInterface = interfaces.nextElement()
-                // Skip loopback and down interfaces
-                if (networkInterface.isLoopback || !networkInterface.isUp) continue
-
-                val addrs = networkInterface.inetAddresses
-                while (addrs.hasMoreElements()) {
-                    val addr = addrs.nextElement()
-                    // Only include IPv4 addresses
-                    if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
-                        val ip = addr.hostAddress
-                        // Include local network addresses
-                        if (ip != null && (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172."))) {
-                            addresses.add(ip)
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("DnsttProxy", "Error getting IP addresses: ${e.message}")
-        }
-        return addresses
-    }
-
-    // Connect proxy with sharing enabled (binds to 0.0.0.0)
-    private fun connectProxyShared(
-        dnsServer: String,
-        resolverOptions: ResolverOptions,
-        tunnelDomain: String,
-        publicKey: String,
-        proxyPort: Int,
-        socksAuth: SocksAuth?,
-        result: MethodChannel.Result
-    ) {
-        if (DnsttProxyService.isRunning.get()) {
-            result.success(true)
-            return
-        }
-
-        Log.d("DnsttProxy", "Starting shared proxy service on port $proxyPort")
-        isProxySharingEnabled.set(true)
-
-        // Set up state callback
-        DnsttProxyService.stateCallback = { state ->
-            runOnUiThread {
-                eventSink?.success(state)
-            }
-        }
-
-        // Start the proxy service with sharing enabled
-        val serviceIntent = Intent(this, DnsttProxyService::class.java).apply {
-            action = DnsttProxyService.ACTION_CONNECT
-            putExtra(DnsttProxyService.EXTRA_DNS_SERVER, dnsServer)
-            putExtra(DnsttProxyService.EXTRA_TUNNEL_DOMAIN, tunnelDomain)
-            putExtra(DnsttProxyService.EXTRA_PUBLIC_KEY, publicKey)
-            putExtra(DnsttProxyService.EXTRA_PROXY_PORT, proxyPort)
-            putExtra(DnsttProxyService.EXTRA_SHARE_PROXY, true)
-            putSocksAuth(socksAuth, DnsttProxyService.EXTRA_SOCKS_USERNAME, DnsttProxyService.EXTRA_SOCKS_PASSWORD)
-            resolverOptions.putInto(this)
-        }
-        startForegroundService(serviceIntent)
         result.success(true)
     }
 
@@ -602,7 +505,6 @@ class MainActivity : FlutterActivity() {
             putExtra(SlipstreamProxyService.EXTRA_CONGESTION_CONTROL, congestionControl)
             putExtra(SlipstreamProxyService.EXTRA_KEEP_ALIVE_INTERVAL, keepAliveInterval)
             putExtra(SlipstreamProxyService.EXTRA_GSO, gso)
-            putExtra(SlipstreamProxyService.EXTRA_SHARE_PROXY, false)
             putSocksAuth(socksAuth, SlipstreamProxyService.EXTRA_SOCKS_USERNAME, SlipstreamProxyService.EXTRA_SOCKS_PASSWORD)
         }
         startForegroundService(serviceIntent)
@@ -743,7 +645,6 @@ class MainActivity : FlutterActivity() {
         sshUsername: String,
         sshPassword: String?,
         sshPrivateKey: String?,
-        shareProxy: Boolean,
         result: MethodChannel.Result
     ) {
         if (isSshTunnelRunning.get()) {
@@ -770,13 +671,12 @@ class MainActivity : FlutterActivity() {
                 val sshConnected = sshTunnelClient?.connect(
                     username = sshUsername,
                     password = sshPassword,
-                    privateKey = sshPrivateKey,
-                    shareProxy = shareProxy
+                    privateKey = sshPrivateKey
                 ) ?: false
 
                 if (sshConnected) {
                     isSshTunnelRunning.set(true)
-                    Log.d("DnsttSsh", "SSH tunnel connected, SOCKS5 proxy on port 1080 (sharing: $shareProxy)")
+                    Log.d("DnsttSsh", "SSH tunnel connected, SOCKS5 proxy on port 1080")
 
                     runOnUiThread {
                         eventSink?.success("ssh_tunnel_connected")

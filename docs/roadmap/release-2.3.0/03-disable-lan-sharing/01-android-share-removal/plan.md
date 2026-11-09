@@ -1,6 +1,6 @@
 ---
 kind: task
-status: todo
+status: done
 detailed: true
 ---
 
@@ -86,3 +86,45 @@ enough for compilation until that task rebuilds it.
   records it in the listener inventory so the stage criterion is not silently
   weakened.
 - No user action is needed: no network, new SDK package or device is used.
+
+## Outcome
+
+- `DnsttProxyService.kt`, `SlipstreamProxyService.kt`, `SshTunnelClient.kt` and
+  `MainActivity.kt` no longer carry a share-proxy switch: `EXTRA_SHARE_PROXY`,
+  the `shareProxy` fields and intent reads, the `setShareProxy` call, the
+  `0.0.0.0` bind branches, the `isProxySharingEnabled` flag, the
+  `setProxySharing`, `isProxySharingEnabled`, `connectProxyShared` and
+  `getLocalIpAddresses` channel cases and functions, the `NetworkInterface`
+  import, the two `putExtra` calls and the `shareProxy` parameter of
+  `connectSshTunnel` / `SshTunnelClient.connect` are gone. Every SOCKS5 listener
+  in these paths binds `127.0.0.1`; the auth-relay free-port selection, the
+  SOCKS5 auth path and the VPN, Slipstream and SSH flows are otherwise
+  unchanged.
+- Both step-5 greps pass: the share-identifier grep over
+  `android/app/src/main/kotlin` prints nothing, and the `0.0.0.0` grep prints
+  only the VPN route `addRoute("0.0.0.0", 0)` in `DnsttVpnService.kt`.
+  `(cd android && ./gradlew :app:testDebugUnitTest)` is green with 11 tests
+  (6 relay, 5 tun2socks), 0 failures.
+- The `0.0.0.0` grep first also matched a pre-existing comment
+  `// Bind address (0.0.0.0)` on the SOCKS5 reply bytes in `SshTunnelClient.kt`.
+  It described the protocol's unspecified `BND.ADDR`, not a listener, so the
+  comment was reworded to `// BND.ADDR: unspecified` with the bytes unchanged,
+  to make the done-when literal. Two comments that still said the auth relay
+  "takes the public address" were reworded to name the proxy port. No code
+  changed in the review round.
+- `git diff` touches only the four Kotlin files. No Go, Dart, desktop, Gradle,
+  CI, release or AAR file changed. The prepared `dnstt.aar` still exports
+  `setShareProxy`; that is expected until
+  [02-go-share-api-removal](../02-go-share-api-removal/plan.md) removes the
+  method and rebuilds the AAR.
+- Deferred to the later nodes: the debug APK build, the full Flutter, Go and
+  Kotlin suites and the listener inventory
+  ([03-verify-local-only](../03-verify-local-only/plan.md)); the
+  `CODE_REVIEW.md`, `CLAUDE.md` and architecture updates
+  ([04-docs-and-review](../04-docs-and-review/plan.md)). Noted for the
+  inventory: the pre-existing port-availability checks (`isPortInUse`) in
+  `DnsttProxyService.kt` and `DnsttVpnService.kt` briefly bind a wildcard
+  `ServerSocket` without accepting traffic; they are not SOCKS5 listeners and
+  this task does not change them.
+- Independent review found no defects or regressions; the only findings were
+  the comment wording above.

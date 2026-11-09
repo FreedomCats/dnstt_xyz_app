@@ -40,7 +40,6 @@ class SshTunnelClient {
     private var isRunning = AtomicBoolean(false)
     private var socksJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var shareProxyEnabled = false
 
     var lastError: String? = null
         private set
@@ -51,16 +50,13 @@ class SshTunnelClient {
      * @param username SSH username
      * @param password SSH password (optional if using key)
      * @param privateKey SSH private key in OpenSSH format (optional if using password)
-     * @param shareProxy If true, bind to 0.0.0.0 to allow network access; if false, bind to 127.0.0.1
      * @return true if connection successful
      */
     suspend fun connect(
         username: String,
         password: String? = null,
-        privateKey: String? = null,
-        shareProxy: Boolean = false
+        privateKey: String? = null
     ): Boolean = withContext(Dispatchers.IO) {
-        shareProxyEnabled = shareProxy
         try {
             if (isRunning.get()) {
                 Log.w(TAG, "SSH tunnel already running")
@@ -135,19 +131,14 @@ class SshTunnelClient {
      * Start local SOCKS5 proxy server that forwards through SSH.
      */
     private fun startSocksProxy(port: Int) {
-        // Bind to 0.0.0.0 if sharing is enabled, otherwise bind to localhost only
-        val bindAddress = if (shareProxyEnabled) {
-            InetSocketAddress(InetAddress.getByName("0.0.0.0"), port)
-        } else {
-            InetSocketAddress(InetAddress.getByName("127.0.0.1"), port)
-        }
+        val bindAddress = InetSocketAddress(InetAddress.getByName("127.0.0.1"), port)
 
         socksServerSocket = ServerSocket().apply {
             reuseAddress = true
             bind(bindAddress)
         }
 
-        Log.i(TAG, "SOCKS5 proxy binding to ${bindAddress.address.hostAddress}:$port (sharing: $shareProxyEnabled)")
+        Log.i(TAG, "SOCKS5 proxy binding to ${bindAddress.address.hostAddress}:$port")
 
         socksJob = scope.launch {
             Log.i(TAG, "SOCKS5 proxy listening on port $port")
@@ -248,7 +239,7 @@ class SshTunnelClient {
                 // Send success response
                 output.write(byteArrayOf(
                     0x05, 0x00, 0x00, 0x01,
-                    0x00, 0x00, 0x00, 0x00, // Bind address (0.0.0.0)
+                    0x00, 0x00, 0x00, 0x00, // BND.ADDR: unspecified
                     0x00, 0x00 // Bind port (0)
                 ))
                 output.flush()

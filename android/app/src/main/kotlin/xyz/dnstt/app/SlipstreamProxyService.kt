@@ -33,7 +33,6 @@ class SlipstreamProxyService : Service() {
         const val EXTRA_CONGESTION_CONTROL = "congestion_control"
         const val EXTRA_KEEP_ALIVE_INTERVAL = "keep_alive_interval"
         const val EXTRA_GSO = "gso"
-        const val EXTRA_SHARE_PROXY = "share_proxy"
         const val EXTRA_SOCKS_USERNAME = "socks_username"
         const val EXTRA_SOCKS_PASSWORD = "socks_password"
 
@@ -48,7 +47,6 @@ class SlipstreamProxyService : Service() {
     private var congestionControl: String = "dcubic"
     private var keepAliveInterval: Int = 400
     private var gso: Boolean = false
-    private var shareProxy: Boolean = false
     private var socksUsername: String? = null
     private var socksPassword: String? = null
 
@@ -73,7 +71,6 @@ class SlipstreamProxyService : Service() {
                 congestionControl = intent.getStringExtra(EXTRA_CONGESTION_CONTROL) ?: "dcubic"
                 keepAliveInterval = intent.getIntExtra(EXTRA_KEEP_ALIVE_INTERVAL, 400)
                 gso = intent.getBooleanExtra(EXTRA_GSO, false)
-                shareProxy = intent.getBooleanExtra(EXTRA_SHARE_PROXY, false)
                 socksUsername = intent.getStringExtra(EXTRA_SOCKS_USERNAME)
                 socksPassword = intent.getStringExtra(EXTRA_SOCKS_PASSWORD)
                 if (isConnecting.compareAndSet(false, true)) {
@@ -122,12 +119,10 @@ class SlipstreamProxyService : Service() {
             }
 
             slipstreamBridge = SlipstreamBridge()
-            val bindHost = if (shareProxy) "0.0.0.0" else "127.0.0.1"
             val useSocksAuth = !socksUsername.isNullOrEmpty()
-            // With upstream SOCKS5 credentials, the auth relay takes the public address
+            // With upstream SOCKS5 credentials, the auth relay listens on the proxy port
             // and slipstream listens on a free localhost port behind it
             val tunnelPort = if (useSocksAuth) Socks5AuthRelay.findFreePort() else proxyPort
-            val host = if (useSocksAuth) "127.0.0.1" else bindHost
 
             var started = slipstreamBridge!!.startClient(
                 domain = tunnelDomain,
@@ -136,19 +131,19 @@ class SlipstreamProxyService : Service() {
                 congestionControl = congestionControl,
                 keepAliveInterval = keepAliveInterval,
                 port = tunnelPort,
-                host = host,
+                host = "127.0.0.1",
                 gso = gso
             )
 
             if (started && useSocksAuth) {
                 val relay = Socks5AuthRelay(
-                    bindHost, proxyPort, "127.0.0.1", tunnelPort,
+                    "127.0.0.1", proxyPort, "127.0.0.1", tunnelPort,
                     socksUsername!!, socksPassword ?: ""
                 )
                 if (relay.start()) {
                     socksRelay = relay
                 } else {
-                    Log.e(TAG, "Failed to start SOCKS5 auth relay on $bindHost:$proxyPort")
+                    Log.e(TAG, "Failed to start SOCKS5 auth relay on 127.0.0.1:$proxyPort")
                     slipstreamBridge?.stopClient()
                     started = false
                 }
