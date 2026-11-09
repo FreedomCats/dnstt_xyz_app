@@ -1,6 +1,7 @@
 ---
 kind: task
-status: todo
+status: blocked
+detailed: true
 depends: [01-macos-path-remap]
 ---
 
@@ -97,3 +98,13 @@ from a commit whose ordinary gate is red.
   already have downloaded is a separate user decision.
 - The `workflow_dispatch` trigger builds the default branch and is not used
   here; the tag is the only correct way to rerun the release.
+
+## Open question
+
+The macOS remap fix is committed at `c9019d0`; static checks pass, and the
+tracked `macos/Runner/Libraries/slipstream-client` and the vendored tree are
+unchanged. The user must authorize the fast-forward push of `develop` and the
+`ci.yml` run; the tag move (`git tag -f v2.3.0-beta <green head>` and
+`git push --force origin refs/tags/v2.3.0-beta`) is a separate go-ahead after
+that run is green. Nothing has been pushed and the remote tag still points at
+`21d5446`.
