@@ -169,12 +169,7 @@ jobs:
           cp libdnstt.dylib ../macos/Runner/Libraries/
 
       - name: Build slipstream-client for macOS ARM64
-        run: |
-          cd vendor/slipstream-rust
-          RUSTFLAGS="--remap-path-prefix=$(pwd)=/build/s --remap-path-prefix=$HOME=/_" \
-          cargo build -p slipstream-client --release --features openssl-vendored
-          cp target/release/slipstream-client ../../macos/Runner/Libraries/slipstream-client
-          chmod +x ../../macos/Runner/Libraries/slipstream-client
+        run: scripts/build_slipstream_macos.sh
 
       - name: Check libraries for machine paths
         run: scripts/check_binary_paths.sh go_src/libdnstt.dylib macos/Runner/Libraries/slipstream-client
@@ -246,12 +241,7 @@ jobs:
           cp libdnstt.dylib ../macos/Runner/Libraries/
 
       - name: Build slipstream-client for macOS Intel
-        run: |
-          cd vendor/slipstream-rust
-          RUSTFLAGS="--remap-path-prefix=$(pwd)=/build/s --remap-path-prefix=$HOME=/_" \
-          cargo build -p slipstream-client --release --features openssl-vendored
-          cp target/release/slipstream-client ../../macos/Runner/Libraries/slipstream-client
-          chmod +x ../../macos/Runner/Libraries/slipstream-client
+        run: scripts/build_slipstream_macos.sh
 
       - name: Check libraries for machine paths
         run: scripts/check_binary_paths.sh go_src/libdnstt.dylib macos/Runner/Libraries/slipstream-client

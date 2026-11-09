@@ -1,6 +1,6 @@
 ---
 kind: task
-status: todo
+status: done
 detailed: true
 ---
 
@@ -129,3 +129,51 @@ before it replaces the tracked `macos/Runner/Libraries/slipstream-client`.
   binary over the tracked `macos/Runner/Libraries/slipstream-client`.
 - No outward action is part of this task. The push and the tag move in
   [02](../02-move-tag-and-rerun/plan.md) need the user's explicit go-ahead.
+
+## Outcome
+
+- Added `scripts/build_slipstream_macos.sh` (mode `0755`, `#!/bin/bash`,
+  `set -euo pipefail`). It resolves the project and the vendored checkout from
+  its own location with `cd … && pwd -P`, refuses to run where `uname -s` is
+  not `Darwin` or `HOME` is unset, and fails with the
+  `git submodule update --init --recursive vendor/slipstream-rust` instruction
+  when the pinned sources are missing.
+- The exported environment is copied verbatim from
+  `scripts/build_slipstream_android.sh`: the `\x1f`-encoded
+  `CARGO_ENCODED_RUSTFLAGS` with `--remap-path-prefix` for the checkout and
+  `$HOME`, `CFLAGS`/`CXXFLAGS` built with `printf '%q %q'` from two
+  `-ffile-prefix-map` values, `CC_SHELL_ESCAPED_FLAGS=1`, and the
+  `-UENGINESDIR`/`-UMODULESDIR` overrides with neutral
+  `/build/s/openssl/{engines,modules}` values. The four preinstalled-library
+  variables are unset before building. The three shared lines are
+  byte-identical to the Android script, so the two platforms cannot drift.
+- The build command is unchanged:
+  `cargo build -p slipstream-client --release --features openssl-vendored`,
+  without `--locked`, a cache, a target-directory override or an architecture
+  argument.
+- `scripts/check_binary_paths.sh` runs on `target/release/slipstream-client`
+  before copying; only a clean file replaces
+  `macos/Runner/Libraries/slipstream-client` and is made mode `0755`. A failed
+  check exits non-zero and leaves the tracked file untouched.
+- Both macOS jobs now call the script; the two duplicated `cargo build` blocks
+  are gone, while the step names, the following `Check libraries for machine
+  paths` steps and every other job are unchanged. `ci.yml`, the Android build
+  script, the vendored submodule and the tracked binary are untouched.
+- Verified without macOS: `bash -n`, ShellCheck 0.9.0, a YAML parse of
+  `release.yml`, `git diff --check`, and the Go tests and vet. The Dart
+  analyzer and suite were not run because Flutter was not available in the
+  working environment; the change touches no Dart code. A host `clang` probe
+  with the same prefix map and the same macro pair showed the absolute path
+  absent and the neutral values present, including the exact `CPPFLAGS`
+  through a make recipe, which is how OpenSSL and CMake receive it; the same
+  probe without the flags kept the absolute path, so it does detect a leak.
+  Running the script on a non-Darwin host exited with the Darwin-only error and
+  left the tracked binary's hash unchanged.
+- Review found no blocking findings and accepted no fixes. What remains
+  unproven is the macOS build itself: Apple clang, the macOS OpenSSL Configure
+  on a cold runner, and the final `check_binary_paths.sh` on the built binary.
+  Only the rerun in [02](../02-move-tag-and-rerun/plan.md) shows that.
+- Left as it was: `scripts/build_slipstream_desktop.sh` still builds the macOS
+  `slipstream-client` without the remaps and overwrites the tracked binary
+  without running the path check. That predates this task and was not widened
+  here; a local desktop build can put machine paths back into the tracked file.
