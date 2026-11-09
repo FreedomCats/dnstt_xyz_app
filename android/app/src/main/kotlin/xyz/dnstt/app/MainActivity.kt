@@ -146,9 +146,10 @@ class MainActivity : FlutterActivity() {
                     val sshUsername = call.argument<String>("sshUsername") ?: ""
                     val sshPassword = call.argument<String>("sshPassword")
                     val sshPrivateKey = call.argument<String>("sshPrivateKey")
+                    val sshHostKeyFingerprint = call.argument<String>("sshHostKeyFingerprint")
                     connectSshTunnel(
                         dnsServer, ResolverOptions.from(call), tunnelDomain, publicKey,
-                        sshUsername, sshPassword, sshPrivateKey, result
+                        sshUsername, sshPassword, sshPrivateKey, sshHostKeyFingerprint, result
                     )
                 }
                 "connectSshTunnelVpn" -> {
@@ -158,9 +159,10 @@ class MainActivity : FlutterActivity() {
                     val sshUsername = call.argument<String>("sshUsername") ?: ""
                     val sshPassword = call.argument<String>("sshPassword")
                     val sshPrivateKey = call.argument<String>("sshPrivateKey")
+                    val sshHostKeyFingerprint = call.argument<String>("sshHostKeyFingerprint")
                     connectSshTunnelWithVpn(
                         dnsServer, ResolverOptions.from(call), tunnelDomain, publicKey,
-                        sshUsername, sshPassword, sshPrivateKey, result
+                        sshUsername, sshPassword, sshPrivateKey, sshHostKeyFingerprint, result
                     )
                 }
                 "disconnectSshTunnel" -> {
@@ -645,10 +647,11 @@ class MainActivity : FlutterActivity() {
         sshUsername: String,
         sshPassword: String?,
         sshPrivateKey: String?,
+        sshHostKeyFingerprint: String?,
         result: MethodChannel.Result
     ) {
         if (isSshTunnelRunning.get()) {
-            result.success(true)
+            result.success(SshConnectResult.of(true, sshTunnelClient?.acceptedFingerprint, null))
             return
         }
 
@@ -671,20 +674,24 @@ class MainActivity : FlutterActivity() {
                 val sshConnected = sshTunnelClient?.connect(
                     username = sshUsername,
                     password = sshPassword,
-                    privateKey = sshPrivateKey
+                    privateKey = sshPrivateKey,
+                    expectedFingerprint = sshHostKeyFingerprint
                 ) ?: false
 
                 if (sshConnected) {
                     isSshTunnelRunning.set(true)
-                    Log.d("DnsttSsh", "SSH tunnel connected, SOCKS5 proxy on port 1080")
+                    Log.d("DnsttSsh", "SSH tunnel connected, SOCKS5 proxy on port ${SshTunnelClient.SOCKS5_PROXY_PORT}")
 
+                    val response = SshConnectResult.of(true, sshTunnelClient?.acceptedFingerprint, null)
                     runOnUiThread {
                         eventSink?.success("ssh_tunnel_connected")
-                        result.success(true)
+                        result.success(response)
                     }
                 } else {
                     val error = sshTunnelClient?.lastError ?: "SSH connection failed"
                     Log.e("DnsttSsh", "SSH connection failed: $error")
+
+                    val response = SshConnectResult.of(false, null, error)
 
                     // Clean up DNSTT proxy
                     sshDnsttClient?.stop()
@@ -693,11 +700,14 @@ class MainActivity : FlutterActivity() {
 
                     runOnUiThread {
                         eventSink?.success("ssh_tunnel_error")
-                        result.success(false)
+                        result.success(response)
                     }
                 }
             } catch (e: Exception) {
                 Log.e("DnsttSsh", "Failed to start SSH tunnel: ${e.message}", e)
+
+                val error = sshTunnelClient?.lastError ?: e.message ?: "SSH connection failed"
+                val response = SshConnectResult.of(false, null, error)
 
                 // Clean up
                 try {
@@ -710,7 +720,7 @@ class MainActivity : FlutterActivity() {
 
                 runOnUiThread {
                     eventSink?.success("ssh_tunnel_error")
-                    result.success(false)
+                    result.success(response)
                 }
             }
         }
@@ -767,19 +777,20 @@ class MainActivity : FlutterActivity() {
         sshUsername: String,
         sshPassword: String?,
         sshPrivateKey: String?,
+        sshHostKeyFingerprint: String?,
         result: MethodChannel.Result
     ) {
         // Check VPN permission first
         val intent = VpnService.prepare(this)
         if (intent != null) {
             pendingResult = result
-            pendingSshVpnParams = SshVpnParams(dnsServer, resolverOptions, tunnelDomain, publicKey, sshUsername, sshPassword, sshPrivateKey)
+            pendingSshVpnParams = SshVpnParams(dnsServer, resolverOptions, tunnelDomain, publicKey, sshUsername, sshPassword, sshPrivateKey, sshHostKeyFingerprint)
             startActivityForResult(intent, VPN_REQUEST_CODE)
             return
         }
 
         // Permission granted, proceed with connection
-        startSshTunnelWithVpn(dnsServer, resolverOptions, tunnelDomain, publicKey, sshUsername, sshPassword, sshPrivateKey, result)
+        startSshTunnelWithVpn(dnsServer, resolverOptions, tunnelDomain, publicKey, sshUsername, sshPassword, sshPrivateKey, sshHostKeyFingerprint, result)
     }
 
     private data class SshVpnParams(
@@ -789,7 +800,8 @@ class MainActivity : FlutterActivity() {
         val publicKey: String,
         val sshUsername: String,
         val sshPassword: String?,
-        val sshPrivateKey: String?
+        val sshPrivateKey: String?,
+        val sshHostKeyFingerprint: String?
     )
 
     private var pendingSshVpnParams: SshVpnParams? = null
@@ -802,10 +814,11 @@ class MainActivity : FlutterActivity() {
         sshUsername: String,
         sshPassword: String?,
         sshPrivateKey: String?,
+        sshHostKeyFingerprint: String?,
         result: MethodChannel.Result
     ) {
         if (isSshTunnelRunning.get()) {
-            result.success(true)
+            result.success(SshConnectResult.of(true, sshTunnelClient?.acceptedFingerprint, null))
             return
         }
 
@@ -827,21 +840,26 @@ class MainActivity : FlutterActivity() {
                 val sshConnected = sshTunnelClient?.connect(
                     username = sshUsername,
                     password = sshPassword,
-                    privateKey = sshPrivateKey
+                    privateKey = sshPrivateKey,
+                    expectedFingerprint = sshHostKeyFingerprint
                 ) ?: false
 
                 if (sshConnected) {
                     isSshTunnelRunning.set(true)
                     Log.d("DnsttSsh", "SSH tunnel connected, SOCKS5 proxy on port ${SshTunnelClient.SOCKS5_PROXY_PORT}")
 
+                    val response = SshConnectResult.of(true, sshTunnelClient?.acceptedFingerprint, null)
+
                     // Step 3: Start VPN service to route traffic through SSH SOCKS5 proxy
                     runOnUiThread {
                         startVpnServiceForSsh()
-                        result.success(true)
+                        result.success(response)
                     }
                 } else {
                     val error = sshTunnelClient?.lastError ?: "SSH connection failed"
                     Log.e("DnsttSsh", "SSH connection failed: $error")
+
+                    val response = SshConnectResult.of(false, null, error)
 
                     sshDnsttClient?.stop()
                     sshDnsttClient = null
@@ -849,11 +867,14 @@ class MainActivity : FlutterActivity() {
 
                     runOnUiThread {
                         eventSink?.success("ssh_tunnel_error")
-                        result.success(false)
+                        result.success(response)
                     }
                 }
             } catch (e: Exception) {
                 Log.e("DnsttSsh", "Failed to start SSH tunnel with VPN: ${e.message}", e)
+
+                val error = sshTunnelClient?.lastError ?: e.message ?: "SSH connection failed"
+                val response = SshConnectResult.of(false, null, error)
 
                 try { sshDnsttClient?.stop() } catch (_: Exception) {}
                 sshDnsttClient = null
@@ -863,7 +884,7 @@ class MainActivity : FlutterActivity() {
 
                 runOnUiThread {
                     eventSink?.success("ssh_tunnel_error")
-                    result.success(false)
+                    result.success(response)
                 }
             }
         }
@@ -914,6 +935,7 @@ class MainActivity : FlutterActivity() {
                         params.sshUsername,
                         params.sshPassword,
                         params.sshPrivateKey,
+                        params.sshHostKeyFingerprint,
                         pendingResult!!
                     )
                 } else if (pendingProxyHost != null && pendingProxyPort != null) {
@@ -934,9 +956,14 @@ class MainActivity : FlutterActivity() {
                 }
             } else {
                 // Permission denied
+                val sshPending = pendingSshVpnParams != null
                 pendingSshVpnParams = null
                 pendingSlipstreamVpnParams = null
-                pendingResult?.success(false)
+                if (sshPending) {
+                    pendingResult?.success(SshConnectResult.of(false, null, "VPN permission denied"))
+                } else {
+                    pendingResult?.success(false)
+                }
             }
 
             // Clear pending state

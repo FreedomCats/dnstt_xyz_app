@@ -235,6 +235,28 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Persists the SSH host key fingerprint accepted by a successful connection.
+  ///
+  /// Called only after a successful connection. A null or blank value means
+  /// nothing was observed (desktop, or a native reply without a fingerprint), so
+  /// nothing is written. The id check prevents writing config A's accepted key
+  /// into config B after a config switch during the connection, and prevents
+  /// rewriting a config that the editor has since replaced with a stale copy.
+  Future<void> rememberSshHostKeyFingerprint({
+    required String configId,
+    required String? fingerprint,
+  }) async {
+    final value = fingerprint?.trim();
+    if (value == null || value.isEmpty) return;
+
+    final config = _activeConfig;
+    if (config == null || config.id != configId) return;
+    if (config.sshHostKeyFingerprint == value) return;
+
+    config.sshHostKeyFingerprint = value;
+    await updateDnsttConfig(config);
+  }
+
   Future<void> removeDnsttConfig(String id) async {
     await _storage!.removeDnsttConfig(id);
     _dnsttConfigs = await _storage!.getDnsttConfigs();

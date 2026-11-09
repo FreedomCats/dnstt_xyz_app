@@ -18,6 +18,12 @@ class VpnService {
   static const MethodChannel _channel = MethodChannel('xyz.dnstt.app/vpn');
   static const EventChannel _stateChannel = EventChannel('xyz.dnstt.app/vpn_state');
 
+  // Wire keys of the SSH connect reply map, shared with the Kotlin
+  // SshConnectResult object. One spelling on each side.
+  static const String _keyConnected = 'connected';
+  static const String _keyHostKeyFingerprint = 'hostKeyFingerprint';
+  static const String _keyError = 'error';
+
   static final VpnService _instance = VpnService._internal();
   factory VpnService() => _instance;
   VpnService._internal();
@@ -31,6 +37,7 @@ class VpnService {
   bool _platformSupported = true;
   bool _isDesktop = false;
   String? _lastError;
+  String? _lastSshHostKeyFingerprint;
 
   // SSH process for desktop
   Process? _sshProcess;
@@ -91,6 +98,13 @@ class VpnService {
 
   /// Get the last error message
   String? get lastError => _lastError;
+
+  /// Fingerprint of the SSH host key accepted by the last successful connection.
+  ///
+  /// Null on desktop, when the last connection failed, and when the reply did
+  /// not carry a fingerprint. It is a snapshot of the last connection, not a
+  /// stored value; the active config is updated by the caller.
+  String? get lastSshHostKeyFingerprint => _lastSshHostKeyFingerprint;
 
   Future<void> init() async {
     if (_initialized) return;
@@ -812,6 +826,9 @@ class VpnService {
 
   /// Connect SSH tunnel on desktop using DNSTT FFI + system ssh command
   /// DNSTT creates TCP tunnel on internal port 7001, SSH creates SOCKS5 on configured proxy port
+  ///
+  /// [sshHostKeyFingerprint] is accepted for the shared call signature and ignored:
+  /// this desktop path runs the system `ssh` without host key verification.
   Future<bool> _connectSshTunnelDesktop({
     required String dnsServer,
     String? dnsBootstrap,
@@ -820,6 +837,7 @@ class VpnService {
     required String publicKey,
     required String sshUsername,
     String? sshPassword,
+    String? sshHostKeyFingerprint,
   }) async {
     _currentState = VpnState.connecting;
     _stateController.add(_currentState);
@@ -991,6 +1009,7 @@ class VpnService {
 
   /// Disconnect SSH tunnel on desktop
   Future<bool> _disconnectSshTunnelDesktop() async {
+    _lastSshHostKeyFingerprint = null;
     try {
       // Kill SSH process
       if (_sshProcess != null) {
@@ -1166,6 +1185,34 @@ class VpnService {
     }
   }
 
+  /// Parses the reply of the SSH channel methods.
+  ///
+  /// The native side answers with a map carrying `connected`, `hostKeyFingerprint`
+  /// and `error`. A bare boolean is accepted as a safety net so a missed native
+  /// path cannot crash the UI; anything else is a failure with an explicit error.
+  ({bool connected, String? fingerprint, String? error}) _parseSshConnectResult(
+    Object? result,
+  ) {
+    if (result is Map) {
+      final connected = result[_keyConnected] == true;
+      final fingerprint = result[_keyHostKeyFingerprint];
+      final error = result[_keyError];
+      return (
+        connected: connected,
+        fingerprint: fingerprint is String ? fingerprint : null,
+        error: error is String ? error : null,
+      );
+    }
+    if (result is bool) {
+      return (connected: result, fingerprint: null, error: null);
+    }
+    return (
+      connected: false,
+      fingerprint: null,
+      error: 'Unexpected SSH channel response',
+    );
+  }
+
   /// Connect SSH tunnel over DNSTT
   /// Flow: DNSTT tunnel -> SSH client -> SSH dynamic port forwarding -> local SOCKS5 proxy on configured port
   Future<bool> connectSshTunnel({
@@ -1177,6 +1224,7 @@ class VpnService {
     required String sshUsername,
     String? sshPassword,
     String? sshPrivateKey,
+    String? sshHostKeyFingerprint,
   }) async {
     if (_isDesktop) {
       return _connectSshTunnelDesktop(
@@ -1187,12 +1235,14 @@ class VpnService {
         publicKey: publicKey ?? '',
         sshUsername: sshUsername,
         sshPassword: sshPassword,
+        sshHostKeyFingerprint: sshHostKeyFingerprint,
       );
     }
 
     _currentState = VpnState.connecting;
     _stateController.add(_currentState);
     _lastError = null;
+    _lastSshHostKeyFingerprint = null;
     // Reset all mode flags and set SSH tunnel mode
     _isProxyMode = false;
     _isSshTunnelMode = true;
@@ -1208,7 +1258,7 @@ class VpnService {
     }
 
     try {
-      final result = await _channel.invokeMethod<bool>('connectSshTunnel', {
+      final result = await _channel.invokeMethod<dynamic>('connectSshTunnel', {
         'dnsServer': dnsServer ?? '8.8.8.8',
         'dnsBootstrap': dnsBootstrap,
         'tlsFingerprint': tlsFingerprint,
@@ -1217,16 +1267,22 @@ class VpnService {
         'sshUsername': sshUsername,
         'sshPassword': sshPassword,
         'sshPrivateKey': sshPrivateKey,
+        'sshHostKeyFingerprint': sshHostKeyFingerprint,
       });
 
-      if (result == true) {
+      final parsed = _parseSshConnectResult(result);
+      if (parsed.connected) {
+        _lastSshHostKeyFingerprint = parsed.fingerprint;
+        _lastError = null;
         _currentState = VpnState.connected;
       } else {
+        _lastSshHostKeyFingerprint = null;
+        _lastError = parsed.error;
         _currentState = VpnState.error;
         _isSshTunnelMode = false;
       }
       _stateController.add(_currentState);
-      return result ?? false;
+      return parsed.connected;
     } on MissingPluginException {
       _platformSupported = false;
       await Future.delayed(const Duration(milliseconds: 1500));
@@ -1236,6 +1292,7 @@ class VpnService {
     } on PlatformException catch (e) {
       print('SSH tunnel connect error: ${e.message}');
       _lastError = e.message;
+      _lastSshHostKeyFingerprint = null;
       _currentState = VpnState.error;
       _isSshTunnelMode = false;
       _stateController.add(_currentState);
@@ -1254,6 +1311,7 @@ class VpnService {
     required String sshUsername,
     String? sshPassword,
     String? sshPrivateKey,
+    String? sshHostKeyFingerprint,
   }) async {
     if (_isDesktop) {
       // Desktop doesn't have VPN mode, use regular SSH tunnel
@@ -1266,12 +1324,14 @@ class VpnService {
         sshUsername: sshUsername,
         sshPassword: sshPassword,
         sshPrivateKey: sshPrivateKey,
+        sshHostKeyFingerprint: sshHostKeyFingerprint,
       );
     }
 
     _currentState = VpnState.connecting;
     _stateController.add(_currentState);
     _lastError = null;
+    _lastSshHostKeyFingerprint = null;
     // Reset all mode flags and set SSH tunnel mode
     _isProxyMode = false;
     _isSshTunnelMode = true;
@@ -1287,7 +1347,7 @@ class VpnService {
     }
 
     try {
-      final result = await _channel.invokeMethod<bool>('connectSshTunnelVpn', {
+      final result = await _channel.invokeMethod<dynamic>('connectSshTunnelVpn', {
         'dnsServer': dnsServer ?? '8.8.8.8',
         'dnsBootstrap': dnsBootstrap,
         'tlsFingerprint': tlsFingerprint,
@@ -1296,16 +1356,22 @@ class VpnService {
         'sshUsername': sshUsername,
         'sshPassword': sshPassword,
         'sshPrivateKey': sshPrivateKey,
+        'sshHostKeyFingerprint': sshHostKeyFingerprint,
       });
 
-      if (result == true) {
+      final parsed = _parseSshConnectResult(result);
+      if (parsed.connected) {
+        _lastSshHostKeyFingerprint = parsed.fingerprint;
+        _lastError = null;
         _currentState = VpnState.connected;
       } else {
+        _lastSshHostKeyFingerprint = null;
+        _lastError = parsed.error;
         _currentState = VpnState.error;
         _isSshTunnelMode = false;
       }
       _stateController.add(_currentState);
-      return result ?? false;
+      return parsed.connected;
     } on MissingPluginException {
       _platformSupported = false;
       await Future.delayed(const Duration(milliseconds: 1500));
@@ -1315,6 +1381,7 @@ class VpnService {
     } on PlatformException catch (e) {
       print('SSH tunnel VPN connect error: ${e.message}');
       _lastError = e.message;
+      _lastSshHostKeyFingerprint = null;
       _currentState = VpnState.error;
       _isSshTunnelMode = false;
       _stateController.add(_currentState);
@@ -1327,6 +1394,8 @@ class VpnService {
     if (_isDesktop) {
       return _disconnectSshTunnelDesktop();
     }
+
+    _lastSshHostKeyFingerprint = null;
 
     _currentState = VpnState.disconnecting;
     _stateController.add(_currentState);

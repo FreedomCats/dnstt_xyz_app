@@ -878,6 +878,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // Set the proxy port on VpnService for display purposes
     _vpnService.proxyPort = state.proxyPort;
 
+    final sshConfigId = isSshTunnel ? state.activeConfig?.id : null;
+
     bool success;
 
     if (isSshTunnel && useProxyMode) {
@@ -892,6 +894,7 @@ class _HomeScreenState extends State<HomeScreen> {
         sshUsername: config.sshUsername!,
         sshPassword: config.sshPassword,
         sshPrivateKey: config.sshPrivateKey,
+        sshHostKeyFingerprint: config.sshHostKeyFingerprint,
       );
     } else if (isSshTunnel && !useProxyMode) {
       // SSH tunnel in VPN mode - DNSTT + SSH + VPN routing
@@ -905,6 +908,7 @@ class _HomeScreenState extends State<HomeScreen> {
         sshUsername: config.sshUsername!,
         sshPassword: config.sshPassword,
         sshPrivateKey: config.sshPrivateKey,
+        sshHostKeyFingerprint: config.sshHostKeyFingerprint,
       );
     } else if (isSlipstream && useProxyMode) {
       // Slipstream in proxy mode
@@ -959,6 +963,13 @@ class _HomeScreenState extends State<HomeScreen> {
         publicKey: state.activeConfig?.publicKey,
         socksUsername: state.activeConfig?.upstreamSocksUsername,
         socksPassword: state.activeConfig?.upstreamSocksPassword,
+      );
+    }
+
+    if (success && sshConfigId != null) {
+      await state.rememberSshHostKeyFingerprint(
+        configId: sshConfigId,
+        fingerprint: _vpnService.lastSshHostKeyFingerprint,
       );
     }
 
