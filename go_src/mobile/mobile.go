@@ -9,7 +9,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -53,7 +52,6 @@ type DnsttClient struct {
 	listenAddr     string
 	tunFd          int
 	protector      SocketProtector
-	shareProxy     bool // If true, bind to 0.0.0.0 instead of 127.0.0.1
 }
 
 // NewClient creates a new dnstt client. resolver is a resolver spec: an IP
@@ -106,20 +104,6 @@ func (c *DnsttClient) SetSocketProtector(p SocketProtector) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.protector = p
-}
-
-// SetShareProxy enables or disables proxy sharing (binding to 0.0.0.0)
-func (c *DnsttClient) SetShareProxy(enabled bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.shareProxy = enabled
-}
-
-// IsShareProxyEnabled returns whether proxy sharing is enabled
-func (c *DnsttClient) IsShareProxyEnabled() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.shareProxy
 }
 
 // options returns the client options for reaching a resolver.
@@ -179,19 +163,8 @@ func (c *DnsttClient) Start() error {
 		return fmt.Errorf("failed to create noise session: %v", err)
 	}
 
-	// Determine the listen address based on proxy sharing
-	listenAddr := c.listenAddr
-	if c.shareProxy {
-		// Replace 127.0.0.1 with 0.0.0.0 to allow connections from other devices
-		if strings.HasPrefix(listenAddr, "127.0.0.1:") {
-			port := strings.TrimPrefix(listenAddr, "127.0.0.1:")
-			listenAddr = "0.0.0.0:" + port
-			log.Printf("Proxy sharing enabled, listening on %s", listenAddr)
-		}
-	}
-
 	// Start TCP listener for SOCKS5
-	listener, err := net.Listen("tcp", listenAddr)
+	listener, err := net.Listen("tcp", c.listenAddr)
 	if err != nil {
 		tunnel.Close()
 		return fmt.Errorf("failed to start listener: %v", err)
@@ -381,69 +354,6 @@ func ProbeResolver(spec, bootstrap, fingerprint, tunnelDomain string, timeoutMs 
 		return 0, err
 	}
 	return int(latency.Milliseconds()), nil
-}
-
-// GetLocalIPAddresses returns a comma-separated list of local IP addresses
-func GetLocalIPAddresses() string {
-	var ips []string
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return ""
-	}
-
-	for _, iface := range ifaces {
-		// Skip down interfaces and loopback
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-
-			// Skip IPv6 and loopback addresses
-			if ip == nil || ip.IsLoopback() || ip.To4() == nil {
-				continue
-			}
-
-			// Only include private network addresses
-			if isPrivateIP(ip) {
-				ips = append(ips, ip.String())
-			}
-		}
-	}
-
-	return strings.Join(ips, ",")
-}
-
-// isPrivateIP checks if the IP is a private network address
-func isPrivateIP(ip net.IP) bool {
-	privateBlocks := []string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-	}
-
-	for _, block := range privateBlocks {
-		_, subnet, err := net.ParseCIDR(block)
-		if err != nil {
-			continue
-		}
-		if subnet.Contains(ip) {
-			return true
-		}
-	}
-	return false
 }
 
 // ConnectWithTunFd starts the tunnel using a TUN file descriptor from Android
