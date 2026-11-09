@@ -4,7 +4,8 @@
 # Android extracts this executable from jniLibs because of its lib*.so name.
 #
 # Prerequisites:
-#   - Rust, cargo-ndk, CMake, make, Perl and Git
+#   - Rust, cargo-ndk, CMake, make, Perl, pkg-config, Git and a host C
+#     compiler (cc)
 #   - Rust targets: aarch64-linux-android, armv7-linux-androideabi,
 #     x86_64-linux-android
 #   - NDK 28.2.13676358 (ANDROID_NDK_HOME/ANDROID_NDK_ROOT, or the pinned
@@ -32,7 +33,7 @@ fail() {
     exit 1
 }
 
-for tool in cargo cargo-ndk rustc rustup git cmake make perl pkg-config strings grep sed sort head mktemp uname cp chmod rm rmdir cat mv; do
+for tool in cargo cargo-ndk rustc rustup git cmake make perl pkg-config strings grep sed sort head mktemp uname cp chmod rm rmdir cat mv tr; do
     command -v "$tool" > /dev/null || fail "Required tool not found: $tool"
 done
 test -x "$SCRIPT_DIR/check_binary_paths.sh" || fail "Binary path checker is missing"
@@ -281,6 +282,23 @@ exec "$cmake" "$@" -U '*BROTLI*' \
     "-DOPENSSL_SSL_LIBRARY=$OPENSSL_ROOT_DIR/lib/libssl.a"
 CMAKE
 chmod +x "$native_cmake"
+# Cargo uses `cc` from PATH as the default linker for host build scripts. The
+# driver directory puts the NDK Android wrapper first, so pin the real host
+# compiler for the host target unless the environment already provides it.
+host_target="$(rustc -vV | sed -n 's/^host: //p')"
+[ -n "$host_target" ] || fail "Cannot determine the Rust host triple"
+host_cc="$(command -v cc)" || fail "Host C compiler not found: cc"
+# A relative PATH element yields a relative path, which would resolve against
+# the driver directory after the cd below.
+case "$host_cc" in
+    /*) ;;
+    *) host_cc="$(cd "$(dirname "$host_cc")" && pwd -P)/${host_cc##*/}" ;;
+esac
+test -x "$host_cc" || fail "Host C compiler is not executable: $host_cc"
+linker_env="CARGO_TARGET_$(tr '[:lower:]' '[:upper:]' <<< "${host_target//-/_}")_LINKER"
+if [ -z "${!linker_env:-}" ]; then
+    export "$linker_env=$host_cc"
+fi
 export PATH="$driver_dir:$PATH"
 # Do not discover optional host libraries while configuring an Android target.
 export PKG_CONFIG_LIBDIR="$driver_dir"

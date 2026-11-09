@@ -453,7 +453,9 @@ so the script must run first; there is no download fallback.
 its matching entry. `SlipstreamBridge.kt` resolves the executable under
 `applicationInfo.nativeLibraryDir`; an instrumentation smoke test starts it on
 x86_64 through the bridge and on the accepted ARMv7-capable runtime (an x86_64
-image with ARM translation) directly. The APK size grows by about 4 MB per ABI.
+image with ARM translation) directly. The measured APK growth is about 2-3 MB
+per ABI, the compressed size of the packaged executable entry in the split
+APKs.
 
 ## 6. Testing
 

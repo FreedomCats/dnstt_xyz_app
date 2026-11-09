@@ -487,8 +487,9 @@ Desktop Slipstream manager that:
 - Flutter 3.38.7, Android SDK platform 36, build-tools 35,
   NDK 28.2.13676358, JDK 17 (JDK 21 works too), Go toolchain pinned in
   `go_src/go.mod` (1.26.10; an older local Go downloads it).
-- A local Android build needs `./scripts/build_aar.sh` first (about 3 minutes);
-  it reads `sdk.dir` from `android/local.properties`.
+- A local Android build needs `./scripts/build_aar.sh` (about 3 minutes) and
+  `./scripts/build_slipstream_android.sh` first; the AAR script reads `sdk.dir`
+  from `android/local.properties`.
 - `android/gradlew` and the wrapper jar are not in git (`android/.gitignore`);
   `flutter build apk --config-only` generates them in a few seconds.
 - In cloud containers Maven Central may answer 429 to parallel Gradle
@@ -1024,9 +1025,10 @@ This places the binary at:
 `x86_64` (`x86_64-linux-android`). The generated files are not in git.
 
 Prerequisites: Rust with those three targets, cargo-ndk 4.1.2, CMake, make,
-Perl, Git and NDK 28.2.13676358 (from `ANDROID_NDK_HOME`, `ANDROID_NDK_ROOT`, or
-`sdk.dir` in `android/local.properties` plus `ndk/<version>`). Initialize the
-pinned source with the submodule command:
+Perl, pkg-config, a host C compiler (`cc`), Git and NDK 28.2.13676358 (from
+`ANDROID_NDK_HOME`, `ANDROID_NDK_ROOT`, or `sdk.dir` in
+`android/local.properties` plus `ndk/<version>`). Initialize the pinned source
+with the submodule command:
 
 ```bash
 rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android

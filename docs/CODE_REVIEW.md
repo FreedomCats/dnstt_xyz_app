@@ -96,6 +96,11 @@ built from the sources in the repository.
 
 **Fix:** build the AAR (gomobile) and the `.so` (cargo-ndk) in CI.
 
+**Resolved.** `build-aar.yml` builds `dnstt.aar` from `go_src/`, and
+`build-slipstream-android.yml` builds the three Slipstream executables from the
+pinned vendored source. Both are uploaded as artifacts and downloaded by the
+Android jobs; neither is committed.
+
 ### 7. Config import over plain HTTP
 
 The manifest sets `usesCleartextTraffic="true"`, and
