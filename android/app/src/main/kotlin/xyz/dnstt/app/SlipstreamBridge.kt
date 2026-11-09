@@ -1,6 +1,7 @@
 package xyz.dnstt.app
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import mobile.Mobile
 import java.io.BufferedReader
@@ -147,7 +148,12 @@ class SlipstreamBridge {
             }
         } catch (e: Exception) {
             lastError = e.message
-            process?.destroyForcibly()
+            // Process.destroyForcibly() is public API 26; below it repeat the graceful destroy().
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                process?.destroyForcibly()
+            } else {
+                process?.destroy()
+            }
             process = null
             stderrThread = null
             stopDnsBridge()
@@ -194,7 +200,12 @@ class SlipstreamBridge {
             Thread.sleep(200)
             // Force kill if still alive
             if (isRunning()) {
-                process?.destroyForcibly()
+                // Process.destroyForcibly() is public API 26; below it repeat the graceful destroy().
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    process?.destroyForcibly()
+                } else {
+                    process?.destroy()
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping slipstream-client: ${e.message}", e)

@@ -51,6 +51,9 @@ Children, in order:
 5. [05-document-and-close-review](05-document-and-close-review/plan.md)
    (task): align build documentation and record the evidence closing review
    item 3.3.
+6. [06-fix-process-destroy-guard](06-fix-process-destroy-guard/plan.md)
+   (task): guard the production force-kill path for the API 24 minimum, found
+   while accepting task 04.
 
 ## Done when
 
