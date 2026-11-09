@@ -17,8 +17,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * SSH Tunnel Client that creates a local SOCKS5 proxy through SSH dynamic port forwarding.
  *
  * Flow:
- * 1. DNSTT creates TCP tunnel to SSH server (127.0.0.1:7000 -> SSH server port 22)
- * 2. This SSH client connects to 127.0.0.1:7000 (which is the SSH server through DNSTT)
+ * 1. DNSTT creates TCP tunnel to SSH server (127.0.0.1:7001 -> SSH server port 22)
+ * 2. This SSH client connects to 127.0.0.1:7001 (which is the SSH server through DNSTT)
  * 3. Sets up SSH dynamic port forwarding (-D equivalent)
  * 4. Creates local SOCKS5 proxy on specified port (e.g., 1080)
  * 5. User apps connect to 127.0.0.1:1080 for proxied internet access
@@ -31,8 +31,12 @@ class SshTunnelClient {
         private const val DNSTT_TUNNEL_HOST = "127.0.0.1"
         private const val DNSTT_TUNNEL_PORT = 7001
 
-        // SOCKS5 proxy output port (same as other modes)
-        private const val SOCKS5_PROXY_PORT = 1080
+        /**
+         * Local loopback SOCKS5 port this client binds. `MainActivity.startVpnServiceForSsh`
+         * passes the same value to `DnsttVpnService.EXTRA_PROXY_PORT`, so the listener and
+         * the VPN intent share one value.
+         */
+        const val SOCKS5_PROXY_PORT = 1080
     }
 
     private var session: Session? = null
@@ -90,7 +94,7 @@ class SshTunnelClient {
             }
 
             // Create session connecting THROUGH the DNSTT tunnel
-            // The DNSTT tunnel (127.0.0.1:7000) forwards to the SSH server
+            // The DNSTT tunnel (127.0.0.1:7001) forwards to the SSH server
             session = jsch.getSession(username, DNSTT_TUNNEL_HOST, DNSTT_TUNNEL_PORT).apply {
                 // Set password if provided
                 if (!password.isNullOrEmpty()) {
@@ -124,7 +128,7 @@ class SshTunnelClient {
             acceptedFingerprint = hostKeyRepository.acceptedFingerprint
             Log.i(TAG, "SSH session connected successfully")
 
-            // Start local SOCKS5 proxy with dynamic port forwarding on port 7000
+            // Start local SOCKS5 proxy with dynamic port forwarding on SOCKS5_PROXY_PORT
             startSocksProxy(SOCKS5_PROXY_PORT)
 
             isRunning.set(true)
