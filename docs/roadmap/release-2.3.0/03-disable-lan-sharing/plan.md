@@ -1,6 +1,7 @@
 ---
 kind: stage
-status: todo
+status: in-progress
+base: 5bc8530392acc7841b80c82b1f20c1559ac3354e
 ---
 
 # Disable shared LAN access to the proxy
@@ -23,6 +24,27 @@ password-protected version can come back later as its own stage
   the `0.0.0.0` listener they enable; the desktop C exports in
   `go_src/desktop/desktop.go` and the Dart bindings follow if they mirror it.
 - `docs/CODE_REVIEW.md` (item 3 closed with the reason), `CLAUDE.md`.
+
+Children, in order:
+
+1. [01-android-share-removal](01-android-share-removal/plan.md) (task): remove
+   the sharing branches and platform-channel wrappers from the Kotlin services
+   and `MainActivity.kt`; every app listener binds `127.0.0.1`.
+2. [02-go-share-api-removal](02-go-share-api-removal/plan.md) (task): remove
+   `SetShareProxy`, `IsShareProxyEnabled` and the `0.0.0.0` rewrite from
+   `go_src/mobile/mobile.go`, remove the unused local-address helper, and
+   rebuild the AAR.
+3. [03-verify-local-only](03-verify-local-only/plan.md) (task): prove with
+   greps, the Go/Flutter/Kotlin suites and a debug APK build that no SOCKS5
+   listener binds outside loopback.
+4. [04-docs-and-review](04-docs-and-review/plan.md) (task): close
+   `docs/CODE_REVIEW.md` item 3 with the reason and update `CLAUDE.md` and
+   architecture section 5.1.
+
+The desktop C exports and the Dart bindings do not mirror the sharing API
+(`go_src/desktop/desktop.go` takes `listenAddr` and the Dart FFI defaults to
+`127.0.0.1:1080`), so no desktop or Dart source changes; node 03 checks that in
+the listener inventory.
 
 ## Done when
 
