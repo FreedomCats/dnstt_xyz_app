@@ -51,6 +51,14 @@ class ConfigImportExportService {
     }
   }
 
+  /// Trimmed string value, or null when the value is missing, not a string,
+  /// empty or whitespace-only.
+  static String? _nonEmpty(dynamic value) {
+    if (value is! String) return null;
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
   /// Parse a list of config JSON objects
   static List<DnsttConfig> _parseConfigList(List configsList) {
     final configs = <DnsttConfig>[];
@@ -83,6 +91,9 @@ class ConfigImportExportService {
           sshUsername: item['sshUsername']?.toString(),
           sshPassword: item['sshPassword']?.toString(),
           sshPrivateKey: item['sshPrivateKey']?.toString(),
+          sshHostKeyFingerprint: tunnelType == TunnelType.ssh
+              ? _nonEmpty(item['sshHostKeyFingerprint'])
+              : null,
           socksUsername: item['socksUsername']?.toString(),
           socksPassword: item['socksPassword']?.toString(),
           congestionControl: item['congestionControl']?.toString(),
@@ -129,7 +140,7 @@ class ConfigImportExportService {
   /// Export configs to JSON string
   static String exportConfigsToJson(List<DnsttConfig> configs) {
     final data = {
-      'version': '1.3',
+      'version': '1.4',
       'configs': configs.map((c) {
         final configMap = <String, dynamic>{
           'name': c.name,
@@ -160,6 +171,10 @@ class ConfigImportExportService {
         if (c.tunnelType == TunnelType.ssh) {
           if (c.sshUsername != null) configMap['sshUsername'] = c.sshUsername;
           if (c.sshPassword != null) configMap['sshPassword'] = c.sshPassword;
+          final fingerprint = c.sshHostKeyFingerprint?.trim();
+          if (fingerprint != null && fingerprint.isNotEmpty) {
+            configMap['sshHostKeyFingerprint'] = fingerprint;
+          }
         }
 
         return configMap;

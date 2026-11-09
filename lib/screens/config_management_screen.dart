@@ -796,6 +796,7 @@ class _ConfigDialogState extends State<_ConfigDialog> {
   late bool gsoEnabled;
   bool showPassword = false;
   bool showSocksPassword = false;
+  String? _sshHostKeyFingerprint;
 
   @override
   void initState() {
@@ -805,6 +806,7 @@ class _ConfigDialogState extends State<_ConfigDialog> {
     domainController = TextEditingController(text: widget.existingConfig?.tunnelDomain ?? '');
     sshUsernameController = TextEditingController(text: widget.existingConfig?.sshUsername ?? '');
     sshPasswordController = TextEditingController(text: widget.existingConfig?.sshPassword ?? '');
+    _sshHostKeyFingerprint = widget.existingConfig?.sshHostKeyFingerprint;
     socksUsernameController = TextEditingController(text: widget.existingConfig?.socksUsername ?? '');
     socksPasswordController = TextEditingController(text: widget.existingConfig?.socksPassword ?? '');
     selectedTunnelType = widget.existingConfig?.tunnelType ?? TunnelType.socks5;
@@ -1038,6 +1040,8 @@ class _ConfigDialogState extends State<_ConfigDialog> {
                 autocorrect: false,
                 enableSuggestions: false,
               ),
+              const SizedBox(height: 16),
+              _buildSshHostKeySection(),
             ],
           ],
         ),
@@ -1078,6 +1082,34 @@ class _ConfigDialogState extends State<_ConfigDialog> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildSshHostKeySection() {
+    final fingerprint = _sshHostKeyFingerprint;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'SSH host key',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+        ),
+        const SizedBox(height: 4),
+        if (fingerprint != null && fingerprint.isNotEmpty) ...[
+          SelectableText(
+            fingerprint,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          ),
+          TextButton(
+            onPressed: () => setState(() => _sshHostKeyFingerprint = null),
+            child: const Text('Forget host key'),
+          ),
+        ] else
+          Text(
+            'The host key is not remembered yet; it will be remembered on the first connection.',
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          ),
+      ],
     );
   }
 
@@ -1164,6 +1196,9 @@ class _ConfigDialogState extends State<_ConfigDialog> {
         sshPassword: selectedTunnelType == TunnelType.ssh
             ? sshPasswordController.text
             : null,
+        sshHostKeyFingerprint: selectedTunnelType == TunnelType.ssh
+            ? _sshHostKeyFingerprint
+            : null,
         socksUsername: useSocksAuth ? socksUsername : null,
         socksPassword: useSocksAuth ? socksPassword : null,
         congestionControl: selectedTransportType == TransportType.slipstream
@@ -1188,6 +1223,8 @@ class _ConfigDialogState extends State<_ConfigDialog> {
       widget.existingConfig!.sshPassword = selectedTunnelType == TunnelType.ssh
           ? sshPasswordController.text
           : null;
+      widget.existingConfig!.sshHostKeyFingerprint =
+          selectedTunnelType == TunnelType.ssh ? _sshHostKeyFingerprint : null;
       widget.existingConfig!.socksUsername = useSocksAuth ? socksUsername : null;
       widget.existingConfig!.socksPassword = useSocksAuth ? socksPassword : null;
       widget.existingConfig!.congestionControl = selectedTransportType == TransportType.slipstream

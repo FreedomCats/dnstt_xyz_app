@@ -40,6 +40,12 @@ class DnsttConfig {
   String? sshPassword;
   String? sshPrivateKey;
 
+  /// SSH host key fingerprint in the form printed by `ssh-keygen -lf`:
+  /// `SHA256:` followed by the unpadded standard base64 of the SHA-256 of
+  /// the key blob. Null means no key is remembered: the first key seen on a
+  /// connection is accepted and stored (trust on first use).
+  String? sshHostKeyFingerprint;
+
   /// Upstream SOCKS5 credentials (only used when tunnelType is socks5).
   /// Set when the SOCKS5 proxy behind the tunnel server requires
   /// username/password authentication (RFC 1929). The app authenticates
@@ -65,6 +71,7 @@ class DnsttConfig {
     this.sshUsername,
     this.sshPassword,
     this.sshPrivateKey,
+    this.sshHostKeyFingerprint,
     this.socksUsername,
     this.socksPassword,
     this.congestionControl,
@@ -82,6 +89,7 @@ class DnsttConfig {
         'sshUsername': sshUsername,
         'sshPassword': sshPassword,
         'sshPrivateKey': sshPrivateKey,
+        'sshHostKeyFingerprint': sshHostKeyFingerprint,
         'socksUsername': socksUsername,
         'socksPassword': socksPassword,
         'congestionControl': congestionControl,
@@ -99,6 +107,7 @@ class DnsttConfig {
         sshUsername: json['sshUsername'],
         sshPassword: json['sshPassword'],
         sshPrivateKey: json['sshPrivateKey'],
+        sshHostKeyFingerprint: json['sshHostKeyFingerprint'],
         socksUsername: json['socksUsername'],
         socksPassword: json['socksPassword'],
         congestionControl: json['congestionControl'],
@@ -179,6 +188,7 @@ class DnsttConfig {
     String? sshUsername,
     String? sshPassword,
     String? sshPrivateKey,
+    String? sshHostKeyFingerprint,
     String? socksUsername,
     String? socksPassword,
     String? congestionControl,
@@ -195,6 +205,7 @@ class DnsttConfig {
       sshUsername: sshUsername ?? this.sshUsername,
       sshPassword: sshPassword ?? this.sshPassword,
       sshPrivateKey: sshPrivateKey ?? this.sshPrivateKey,
+      sshHostKeyFingerprint: sshHostKeyFingerprint ?? this.sshHostKeyFingerprint,
       socksUsername: socksUsername ?? this.socksUsername,
       socksPassword: socksPassword ?? this.socksPassword,
       congestionControl: congestionControl ?? this.congestionControl,
