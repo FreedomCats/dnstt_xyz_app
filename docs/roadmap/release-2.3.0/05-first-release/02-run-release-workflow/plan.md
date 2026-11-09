@@ -1,6 +1,6 @@
 ---
 kind: stage
-status: in-progress
+status: done
 base: 21d5446dc4c07d10ad0a2a546135ab0b13f45b71
 depends: [01-version-and-tag]
 ---
@@ -96,3 +96,66 @@ run builds and names.
   disabled; enabling them is outside this stage.
 - The release page is public when the run finishes; the notes on it are
   [05-release-notes](../05-release-notes/plan.md).
+
+## Outcome
+
+The first `Build and Release` run failed in both macOS jobs on machine paths in
+the staged Slipstream client. The fix from
+[01-macos-path-remap](01-macos-path-remap/plan.md) was published, the tag moved
+to the fixed head, and the second run published the release page.
+
+- Run [42682231223](https://github.com/FreedomCats/dnstt_xyz_app/actions/runs/42682231223)
+  on `21d5446` failed in `build-macos-arm64` and `build-macos-intel` at
+  `Check libraries for machine paths`; `create-release` was skipped and no
+  release page existed. The offending strings were the runner's checkout path
+  in the picoquic C sources, which keep `__FILE__`, and in the vendored
+  OpenSSL `engines-3` and `ossl-modules` directories. The inline `cargo build`
+  remapped only Rust paths.
+- The fix (commit `c9019d0`) replaced both inline builds with
+  `scripts/build_slipstream_macos.sh`, which adds the C/C++
+  `-ffile-prefix-map` values and the `ENGINESDIR`/`MODULESDIR` overrides that
+  `scripts/build_slipstream_android.sh` already uses, and runs
+  `scripts/check_binary_paths.sh` on the built binary before it replaces the
+  tracked one. Step names and the following path-check steps stayed unchanged;
+  no test, path check, signature step or artifact step was changed, skipped or
+  widened, and no other workflow, script or tracked binary changed in the
+  stage: the code change is `release.yml` and the new script only, the rest of
+  the range is map files.
+- The fix was published as `f74e7d5`; `ci.yml` run
+  [42690405232](https://github.com/FreedomCats/dnstt_xyz_app/actions/runs/42690405232)
+  on that head was green (`aar`, `slipstream-android`, `test`,
+  `build-android`). With a separate go-ahead,
+  [02-move-tag-and-rerun](02-move-tag-and-rerun/plan.md) force-updated the
+  lightweight tag `v2.3.0-beta` from `21d5446` to `f74e7d5`; the remote tag is
+  still a `commit` object, without a peeled entry.
+- Run [42706971253](https://github.com/FreedomCats/dnstt_xyz_app/actions/runs/42706971253)
+  (`Build and Release`, `push`, head `f74e7d5`) completed `success`: `aar`,
+  `slipstream-android`, `build-android`, `build-macos-arm64`,
+  `build-macos-intel` and `create-release` green; `build-linux` and
+  `build-windows` skipped as configured. Both macOS jobs passed
+  `Check libraries for machine paths` on the staged binary, so the remaps took
+  effect on a cold runner for both architectures.
+- `create-release` published the page with `draft: false`, `prerelease: true`
+  and the tag target `f74e7d5`. It carries exactly the five expected assets,
+  all non-zero, and nothing else:
+  `DNSTT-Client-v2.3.0-beta-Android-arm64-v8a.apk`,
+  `DNSTT-Client-v2.3.0-beta-Android-armeabi-v7a.apk`,
+  `DNSTT-Client-v2.3.0-beta-Android-x86_64.apk`,
+  `DNSTT-Client-v2.3.0-beta-macOS-arm64.dmg` and
+  `DNSTT-Client-v2.3.0-beta-macOS-intel.dmg`.
+- Checked at the stage acceptance: `bash -n`, ShellCheck 0.9.0 and
+  `git diff --check` over `21d5446..HEAD` pass; the tracked
+  `macos/Runner/Libraries/slipstream-client` is unchanged and passes
+  `scripts/check_binary_paths.sh`. The full build and test gate was not rerun
+  locally: the green `ci.yml` and `release.yml` runs on exactly `f74e7d5` are
+  the evidence, as they were for the child tasks.
+- Left outside this stage: the artifacts themselves are verified by
+  [03-verify-artifacts](../03-verify-artifacts/plan.md), the install and start
+  on a device by [04-install-on-device](../04-install-on-device/plan.md), and
+  the page notes by [05-release-notes](../05-release-notes/plan.md).
+- Real problems not fixed because of price: none in this stage. Acceptance
+  confirmed a pre-existing gap that stays as it was:
+  `scripts/build_slipstream_desktop.sh` builds the macOS client without the
+  remaps and without the path check, so a local desktop build can put machine
+  paths back into the tracked binary ([01-macos-path-remap](01-macos-path-remap/plan.md),
+  "Outcome"); it predates the stage and is not part of a release built in CI.
