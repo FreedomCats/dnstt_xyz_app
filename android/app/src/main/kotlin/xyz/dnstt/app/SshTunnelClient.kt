@@ -44,29 +44,40 @@ class SshTunnelClient {
     var lastError: String? = null
         private set
 
+    /** Fingerprint of the SSH host key accepted for the current connection, if any. */
+    var acceptedFingerprint: String? = null
+        private set
+
     /**
      * Connect to SSH server through DNSTT tunnel and start SOCKS5 proxy on port 1080.
      *
      * @param username SSH username
      * @param password SSH password (optional if using key)
      * @param privateKey SSH private key in OpenSSH format (optional if using password)
+     * @param expectedFingerprint fingerprint of the SSH host key stored in the config
+     *   (`SHA256:` form). Null or empty means trust on first use: the key the server
+     *   presents is accepted and exposed through [acceptedFingerprint].
      * @return true if connection successful
      */
     suspend fun connect(
         username: String,
         password: String? = null,
-        privateKey: String? = null
+        privateKey: String? = null,
+        expectedFingerprint: String? = null
     ): Boolean = withContext(Dispatchers.IO) {
+        val hostKeyRepository = SshHostKeyRepository(expectedFingerprint)
         try {
             if (isRunning.get()) {
                 Log.w(TAG, "SSH tunnel already running")
                 return@withContext true
             }
 
+            acceptedFingerprint = null
             lastError = null
             Log.i(TAG, "Connecting SSH through DNSTT tunnel at $DNSTT_TUNNEL_HOST:$DNSTT_TUNNEL_PORT")
 
             val jsch = JSch()
+            jsch.hostKeyRepository = hostKeyRepository
 
             // Add private key if provided
             if (!privateKey.isNullOrEmpty()) {
@@ -88,7 +99,7 @@ class SshTunnelClient {
 
                 // Configure session
                 val config = Properties().apply {
-                    put("StrictHostKeyChecking", "no")
+                    put("StrictHostKeyChecking", "yes")
                     put("PreferredAuthentications", "publickey,password,keyboard-interactive")
                     put("compression.s2c", "none")
                     put("compression.c2s", "none")
@@ -110,6 +121,7 @@ class SshTunnelClient {
                 return@withContext false
             }
 
+            acceptedFingerprint = hostKeyRepository.acceptedFingerprint
             Log.i(TAG, "SSH session connected successfully")
 
             // Start local SOCKS5 proxy with dynamic port forwarding on port 7000
@@ -120,7 +132,16 @@ class SshTunnelClient {
 
             true
         } catch (e: Exception) {
-            lastError = e.message ?: "Unknown SSH error"
+            // JSch's own text for a changed key names only the host, so the repository's
+            // message with both fingerprints is used instead.
+            lastError = if (hostKeyRepository.keyChanged) {
+                SshHostKeyRepository.changedMessage(
+                    hostKeyRepository.storedFingerprint ?: hostKeyRepository.acceptedFingerprint!!,
+                    hostKeyRepository.presentedFingerprint!!
+                )
+            } else {
+                e.message ?: "Unknown SSH error"
+            }
             Log.e(TAG, "SSH connection failed: $lastError", e)
             disconnect()
             false
@@ -310,6 +331,7 @@ class SshTunnelClient {
     fun disconnect() {
         Log.i(TAG, "Disconnecting SSH tunnel")
         isRunning.set(false)
+        acceptedFingerprint = null
 
         socksJob?.cancel()
         socksJob = null

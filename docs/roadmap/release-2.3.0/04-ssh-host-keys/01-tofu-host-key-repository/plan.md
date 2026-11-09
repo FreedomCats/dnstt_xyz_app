@@ -1,6 +1,6 @@
 ---
 kind: task
-status: todo
+status: done
 detailed: true
 ---
 
@@ -145,3 +145,37 @@ connect and does not weaken this change. The real-server check is
   [02-ssh-vpn-port-fix](../02-ssh-vpn-port-fix/plan.md); leave the port
   constant change to that task and keep this diff to host-key verification.
 - No user action is needed for the unit test; no SSH server is contacted here.
+
+## Outcome
+
+The Android side verifies the SSH host key on first use.
+`SshHostKeyRepository` computes `SHA256:` plus unpadded standard base64 of
+the SHA-256 of the public key blob, accepts the first key when the config
+carries no fingerprint, accepts the same key later, and refuses a different
+one with both fingerprints and the hint to forget the key in the config.
+`SshTunnelClient` installs the repository per connection, uses
+`StrictHostKeyChecking=yes` and no `UserInfo`, exposes `acceptedFingerprint`,
+and replaces JSch's host-only change text with the repository's message. The
+unit test pins the digest of the empty blob and covers first use, the same
+key, a changed key, a stored fingerprint and the forgotten-key path. The full
+Android unit suite passes (17 tests).
+
+Decisions taken while moving:
+
+- Inside one connection the first accepted key is the reference when the
+  config has no fingerprint, so a second different key is still refused; the
+  stored fingerprint stays the config value.
+- The error path falls back from `storedFingerprint` to `acceptedFingerprint`
+  for the message, so a change detected against the first key of the
+  connection cannot raise a `NullPointerException` while building the text.
+- `acceptedFingerprint` is reset when a new connection actually starts, not on
+  a call that returns because the tunnel is already running.
+- `add`, both `remove` methods and both `getHostKey` methods are no-ops: the key
+  lives in the config, and forgetting it is a config action.
+
+Left to the next nodes by design: persisting the accepted fingerprint
+([03-config-fingerprint](../03-config-fingerprint/plan.md),
+[04-connect-wiring](../04-connect-wiring/plan.md)) and the live handshake
+check ([06-live-check](../06-live-check/plan.md)). JSch 0.2.18 calls the
+repository once per `connect` and does not recheck the key on rekey, so the
+protection added here is the check at connection setup.
