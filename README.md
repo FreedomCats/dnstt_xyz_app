@@ -37,7 +37,7 @@ Both protocols use the same DNS server list — the selected DNS server carries 
 
 ## Download
 
-Download the latest release from the [Releases](https://github.com/dnstt-xyz/dnstt_xyz_app/releases) page.
+Download the latest release from the [Releases](https://github.com/FreedomCats/dnstt_xyz_app/releases) page.
 
 ### Android
 
@@ -53,8 +53,8 @@ Download the latest release from the [Releases](https://github.com/dnstt-xyz/dns
 |------|----------|
 | `DNSTT-Client-*-macOS-arm64.dmg` | macOS (Apple Silicon M1/M2/M3) |
 | `DNSTT-Client-*-macOS-intel.dmg` | macOS (Intel) |
-| `DNSTT-Client-*-Windows.zip` | Windows |
-| `DNSTT-Client-*-Linux.tar.gz` | Linux |
+
+Windows and Linux builds are not part of the current release.
 
 ## Usage
 
@@ -90,7 +90,7 @@ google-chrome --proxy-server="socks5://127.0.0.1:7000"
 
 ```bash
 # Clone the repository (with submodules for Slipstream source)
-git clone --recursive https://github.com/dnstt-xyz/dnstt_xyz_app.git
+git clone --recursive https://github.com/FreedomCats/dnstt_xyz_app.git
 cd dnstt_xyz_app
 
 # Build the Go AAR and the three Slipstream Android executables
@@ -183,7 +183,7 @@ If you find this project useful, consider supporting its development. Your suppo
 ## Links
 
 - **Website**: [https://dnstt.xyz](https://dnstt.xyz)
-- **GitHub**: [https://github.com/dnstt-xyz/dnstt_xyz_app](https://github.com/dnstt-xyz/dnstt_xyz_app)
+- **GitHub**: [https://github.com/FreedomCats/dnstt_xyz_app](https://github.com/FreedomCats/dnstt_xyz_app)
 
 ## License
 
