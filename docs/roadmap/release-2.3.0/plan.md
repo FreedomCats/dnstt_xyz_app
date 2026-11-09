@@ -112,22 +112,26 @@ Node: [03-disable-lan-sharing](03-disable-lan-sharing/plan.md).
 - Risks and what is needed from the user: the feature disappears; if it is wanted
   later it returns as its own stage with a password (architecture 5.1).
 
-### 4. SSH host key verification
+### 4. SSH host key verification and VPN port
 
 Node: [04-ssh-host-keys](04-ssh-host-keys/plan.md).
 
 - Goal: an SSH connection through the tunnel no longer accepts a substituted
-  server key.
+  server key, and the SSH VPN mode points tun2socks at the port that listens.
 - What to do, what is touched: a JSch `HostKeyRepository` with trust on first
   use, the fingerprint stored in the config
   (`sshHostKeyFingerprint`), refusal with both fingerprints on change,
-  "forget host key" in the config editor, a Kotlin unit test.
-- Done when: on a real server the first connection stores the key, a
-  changed key refuses with both fingerprints, forgetting the key lets the new
-  one in; unit test green.
+  "forget host key" in the config editor, a Kotlin unit test; one shared SOCKS5
+  port constant so `startVpnServiceForSsh` passes the port `SshTunnelClient`
+  binds instead of 7000.
+- Done when: on a real server the first connection stores the key, a changed
+  key refuses with both fingerprints, forgetting the key lets the new one in;
+  the SSH VPN mode starts tun2socks on the SOCKS5 port that listens; unit tests
+  green.
 - Depends on: nothing.
-- Risks and what is needed from the user: a changed key blocks the user until they
-  forget it (accepted); import/export must carry the field.
+- Risks and what is needed from the user: a changed key blocks the user until
+  they forget it (accepted); import/export must carry the field. The SSH VPN
+  port defect predates this map and is fixed here by the user's decision.
 
 ### 5. First release
 
