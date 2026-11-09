@@ -1,4 +1,6 @@
 import java.io.FileInputStream
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.util.Properties
 
 plugins {
@@ -140,6 +142,17 @@ tasks.named("preBuild") {
             throw GradleException(
                 "vendor/hev-socks5-tunnel is missing: run git submodule update --init --recursive vendor/hev-socks5-tunnel"
             )
+        }
+        for (abi in listOf("arm64-v8a", "armeabi-v7a", "x86_64")) {
+            val executable = file("src/main/jniLibs/$abi/libslipstream_client.so")
+            if (!Files.isRegularFile(executable.toPath(), LinkOption.NOFOLLOW_LINKS) || executable.length() == 0L) {
+                throw GradleException(
+                    "android/app/src/main/jniLibs/$abi/libslipstream_client.so must be a non-empty regular file: " +
+                        "initialize the pinned Slipstream source with " +
+                        "git submodule update --init --recursive vendor/slipstream-rust if needed, then run " +
+                        "./scripts/build_slipstream_android.sh from the project root before Gradle"
+                )
+            }
         }
     }
 }

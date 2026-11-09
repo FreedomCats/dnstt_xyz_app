@@ -16,8 +16,11 @@ jobs:
   aar:
     uses: ./.github/workflows/build-aar.yml
 
+  slipstream-android:
+    uses: ./.github/workflows/build-slipstream-android.yml
+
   build-android:
-    needs: aar
+    needs: [aar, slipstream-android]
     runs-on: ubuntu-latest
     outputs:
       cert-sha256: ${{ steps.cert.outputs.sha256 }}
@@ -32,6 +35,12 @@ jobs:
           name: dnstt-aar
           path: android/app/libs
 
+      - name: Download Slipstream Android JNI
+        uses: actions/download-artifact@v7
+        with:
+          name: slipstream-android-jni
+          path: android/app/src/main/jniLibs/
+
       - name: Setup Java
         uses: actions/setup-java@v6
         with:
@@ -44,9 +53,6 @@ jobs:
           flutter-version: '3.38.7'
           channel: 'stable'
 
-      # Android uses the pre-compiled slipstream binary from jniLibs/
-      # (committed to repo). To rebuild, run scripts/build_slipstream_android.sh
-
       - name: Get dependencies
         run: flutter pub get
 
@@ -55,11 +61,28 @@ jobs:
 
       # android/gradlew is not in git: Flutter generates it
       - name: Generate Gradle wrapper
-        run: flutter build apk --config-only
+        run: |
+          set -euo pipefail
+          chmod 0755 \
+            android/app/src/main/jniLibs/arm64-v8a/libslipstream_client.so \
+            android/app/src/main/jniLibs/armeabi-v7a/libslipstream_client.so \
+            android/app/src/main/jniLibs/x86_64/libslipstream_client.so
+          test -x android/app/src/main/jniLibs/arm64-v8a/libslipstream_client.so
+          test -x android/app/src/main/jniLibs/armeabi-v7a/libslipstream_client.so
+          test -x android/app/src/main/jniLibs/x86_64/libslipstream_client.so
+          flutter build apk --config-only
 
       - name: Kotlin unit tests
-        working-directory: android
-        run: ./gradlew :app:testDebugUnitTest
+        run: |
+          set -euo pipefail
+          chmod 0755 \
+            android/app/src/main/jniLibs/arm64-v8a/libslipstream_client.so \
+            android/app/src/main/jniLibs/armeabi-v7a/libslipstream_client.so \
+            android/app/src/main/jniLibs/x86_64/libslipstream_client.so
+          test -x android/app/src/main/jniLibs/arm64-v8a/libslipstream_client.so
+          test -x android/app/src/main/jniLibs/armeabi-v7a/libslipstream_client.so
+          test -x android/app/src/main/jniLibs/x86_64/libslipstream_client.so
+          (cd android && ./gradlew :app:testDebugUnitTest)
 
       # Releases must be signed with the project key, or they cannot update an installed release
       - name: Set up release signing key
@@ -78,7 +101,19 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: flutter build apk --release --split-per-abi --obfuscate --split-debug-info="$RUNNER_TEMP/debug-info"
+        run: |
+          set -euo pipefail
+          chmod 0755 \
+            android/app/src/main/jniLibs/arm64-v8a/libslipstream_client.so \
+            android/app/src/main/jniLibs/armeabi-v7a/libslipstream_client.so \
+            android/app/src/main/jniLibs/x86_64/libslipstream_client.so
+          test -x android/app/src/main/jniLibs/arm64-v8a/libslipstream_client.so
+          test -x android/app/src/main/jniLibs/armeabi-v7a/libslipstream_client.so
+          test -x android/app/src/main/jniLibs/x86_64/libslipstream_client.so
+          flutter build apk --release --split-per-abi --obfuscate --split-debug-info="$RUNNER_TEMP/debug-info"
+
+      - name: Check Slipstream in split APKs
+        run: scripts/check_slipstream_apks.sh build/app/outputs/flutter-apk
 
       # libapp.so holds the absolute path of the generated Dart plugin registrant; in CI
       # that is the runner's checkout, not a user path

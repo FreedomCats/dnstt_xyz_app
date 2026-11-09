@@ -104,11 +104,8 @@ key.properties
 
 # Binary files
 /android/app/src/main/assets/dnstt-client-*
-# Ignore jniLibs contents except slipstream-client binaries
-/android/app/src/main/jniLibs/*
-!/android/app/src/main/jniLibs/arm64-v8a/
-/android/app/src/main/jniLibs/arm64-v8a/*
-!/android/app/src/main/jniLibs/arm64-v8a/libslipstream_client.so
+# Generated Android native binaries
+/android/app/src/main/jniLibs/
 
 # Go build artifacts
 go_src/*.aar
