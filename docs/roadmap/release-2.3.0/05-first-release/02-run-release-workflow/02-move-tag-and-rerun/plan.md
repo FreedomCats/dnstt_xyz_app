@@ -1,6 +1,6 @@
 ---
 kind: task
-status: blocked
+status: done
 detailed: true
 depends: [01-macos-path-remap]
 ---
@@ -99,7 +99,14 @@ from a commit whose ordinary gate is red.
 - The `workflow_dispatch` trigger builds the default branch and is not used
   here; the tag is the only correct way to rerun the release.
 
-## Open question
+## Authorization
+
+The user gave the go-ahead on the lead's resume of the map, covering only this
+move: `git tag -f v2.3.0-beta f74e7d5`, `git push --force origin
+refs/tags/v2.3.0-beta`, the delete-and-re-push fallback at the same commit if
+GitHub starts no run, and following the second `Build and Release` run. The old
+run is not rerun; nothing else is pushed, dispatched or cancelled. The premise
+is re-checked immediately before the move.
 
 Steps 1–4 are done. The macOS remap fix is published: remote `develop` is
 `f74e7d5` (the fix `c9019d0` above `21d5446`, with the tracked
@@ -117,3 +124,33 @@ go-ahead that covers only this move: `git tag -f v2.3.0-beta f74e7d5` and
 `Build and Release` run for the tag, which publishes the release page when
 green. The old run is not rerun; nothing else is pushed, dispatched or
 cancelled.
+
+## Outcome
+
+The tag move and the second release run succeeded; the release page is
+published.
+
+- The premise was re-checked immediately before the move: release run
+  `42682231223` was terminal `failure`, no other `release.yml` run existed,
+  `gh release view v2.3.0-beta` found no release, and remote `develop` was
+  `f74e7d5` with the ordinary gate `ci.yml` run `42690405232` green.
+- `v2.3.0-beta` was force-updated to
+  `f74e7d58edcb4dae97dcdd3041d1d0bf7f8593c3` after the go-ahead. On the remote
+  it remains a lightweight tag (no peeled `^{}` entry). GitHub started run
+  `42706971253` (`push`, `headSha` `f74e7d5`) directly; the delete-and-re-push
+  fallback was not needed.
+- Run `42706971253` (`Build and Release`) completed `success`: `aar / build`,
+  `slipstream-android / build`, `build-android`, `build-macos-arm64`,
+  `build-macos-intel` and `create-release` green; `build-linux` and
+  `build-windows` skipped as configured.
+- `create-release` published the page: `v2.3.0-beta`, `draft: false`,
+  `prerelease: true`, with the five expected assets:
+  `DNSTT-Client-v2.3.0-beta-Android-arm64-v8a.apk`,
+  `DNSTT-Client-v2.3.0-beta-Android-armeabi-v7a.apk`,
+  `DNSTT-Client-v2.3.0-beta-Android-x86_64.apk`,
+  `DNSTT-Client-v2.3.0-beta-macOS-arm64.dmg` and
+  `DNSTT-Client-v2.3.0-beta-macOS-intel.dmg`.
+- The old run was not retried; no further push, dispatch, cancellation or
+  release edit was made. The run id and the asset names are the input for
+  [03-verify-artifacts](../../03-verify-artifacts/plan.md) and
+  [05-release-notes](../../05-release-notes/plan.md).
